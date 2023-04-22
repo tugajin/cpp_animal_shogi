@@ -16,7 +16,7 @@
 #include "thread.hpp"
 
 namespace selfplay {
-void push_back(const uint32 hash, const NNScore score);
+void push_back(const Key hash, const NNScore score);
 }
 
 namespace ubfm {
@@ -658,7 +658,7 @@ void UBFMSearcherGlobal::add_replay_buffer(const Node * node) const {
     }
 }
 void test_ubfm() {
-    g_searcher_global.init();
+    ubfm::g_searcher_global.init();
     game::Position pos;
     Tee<<pos<<std::endl;
     Timer timer;

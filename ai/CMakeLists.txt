@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 
 # Project Name
-project(cpp_tic_tac_toe CXX)
+project(cpp_animal_shogi CXX)
 
 set(CMAKE_PREFIX_PATH "~/libtorch")
 

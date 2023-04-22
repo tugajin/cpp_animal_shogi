@@ -6,7 +6,7 @@
 namespace movelist {
 class MoveList {
 private:
-    static constexpr int MAX_LIST_SIZE = 9;
+    static constexpr int MAX_LIST_SIZE = 128;
     Move moves[MAX_LIST_SIZE];
     Move *curr;
 public:

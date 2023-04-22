@@ -9,404 +9,458 @@
 #include "movelist.hpp"
 
 namespace game {
+
 class Position {
 public:
-    Position() {
-        REP_POS(i){
-            this->self_pieces[i] = this->enemy_pieces[i] = 0;
-        }
-        this->pos_turn = BLACK;
-    }
-    Position(const int self_pieces[], const int enemy_pieces[], const Color turn) {
-        REP_POS(i) {
-            this->self_pieces[i] = self_pieces[i];
-            this->enemy_pieces[i] = enemy_pieces[i];
-        }
-        this->pos_turn = turn;
-    }
-    Position(const uint32 h) {
-        auto hash = h;
-        if (hash & 1) {
-            this->pos_turn = WHITE;
-        } else {
-            this->pos_turn = BLACK;
-        }
-        hash >>= 1;
-        int self_pieces[POS_SIZE] = {};
-        int enemy_pieces[POS_SIZE] = {};
-        REP_POS(i) {
-            auto piece = hash & 3;
-            const auto sq = POS_SIZE - i - 1;
-            if (piece == 0) {
-            } else if (piece == 1) {
-                self_pieces[sq] = 1;
-            } else if (piece == 2) {
-                enemy_pieces[sq] = 1;
-            }
-            hash >>= 2;
-        }
-        REP_POS(i) {
-            if (this->turn() == BLACK) {
-                this->self_pieces[i] = self_pieces[i];
-                this->enemy_pieces[i] = enemy_pieces[i];
-            } else {
-                this->self_pieces[i] = enemy_pieces[i];
-                this->enemy_pieces[i] = self_pieces[i];
-            }
-        }
-    }
-    int piece_count(const int pieces[]) const {
-        auto count = 0;
-        REP_POS(i) {
-            if (pieces[i] == 1) {
-                count++;
-            }
-        }
-        return count;
-    }
-    int all_piece_count() const {
-        return this->piece_count(this->self_pieces) + this->piece_count(this->enemy_pieces);
-    }
+    Position() {}
+    Position(const ColorPiece pieces[], const Hand hand[], const Color turn);
+    Position(const Key h);
+    void init_pos();
     bool is_lose() const {
-        auto is_comp = [&](const int x, const int y, const int inc_x, const int inc_y) {
-            for (int sq_x = x, sq_y = y; sq_is_ok(sq_x) && sq_is_ok(sq_y); sq_x += inc_x, sq_y += inc_y) {
-                if (this->enemy(sq_x *3 + sq_y) == 0) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        if (is_comp(0,0,1,1)) { return true; }
-        if (is_comp(0,2,1,-1)) { return true; }
-        REP(i,3) {
-            if (is_comp(i,0,0,1)) { return true; }
-            if (is_comp(0,i,1,0)) { return true; }
-        }
         return false;
     }
-    void find_special_sp(int square[], std::function<void(const int x, const int y, const int inc_x, const int inc_y)> func) const {
-        REP_POS(i) { square[i] = 0; }
-        func(0,0,1,1);
-        func(0,2,1,-1);
-        REP(i,3) {
-            func(i,0,0,1);
-            func(0,i,1,0);
-        }
-    }
-    void reach_sq(int square[]) const {
-        auto func = [&](const int x, const int y, const int inc_x, const int inc_y) {
-            auto self_num = 0;
-            auto reach_num = 0;
-            int reach_point[8] = {};
-            for (int sq_x = x, sq_y = y; sq_is_ok(sq_x) && sq_is_ok(sq_y); sq_x += inc_x, sq_y += inc_y) {
-                const auto sq = sq_x *3 + sq_y;
-                if (this->self(sq) == 1) {
-                    self_num++;
-                }
-                if (this->self(sq) == 0 && this->enemy(sq) == 0) {
-                    reach_point[reach_num++] = sq;
-                }
-            }
-            if (self_num == 2) {
-                REP(i, reach_num) {
-                    square[reach_point[i]] = 1;
-                }
-            }
-        };
-        this->find_special_sp(square,func);
-    }
-    void dangerous_sq(int square[]) const {
-        auto func = [&](const int x, const int y, const int inc_x, const int inc_y) {
-            auto enemy_num = 0;
-            auto dangerous_num = 0;
-            int dangerous_point[8] = {};
-            for (int sq_x = x, sq_y = y; sq_is_ok(sq_x) && sq_is_ok(sq_y); sq_x += inc_x, sq_y += inc_y) {
-                const auto sq = sq_x *3 + sq_y;
-                if (this->enemy(sq) == 1) {
-                    enemy_num++;
-                }
-                if (this->self(sq) == 0 && this->enemy(sq) == 0) {
-                    dangerous_point[dangerous_num++] = sq;
-                }
-            }
-            if (enemy_num == 2) {
-                REP(i, dangerous_num) {
-                    square[dangerous_point[i]] = 1;
-                }
-            }
-        };
-        this->find_special_sp(square,func);
-    }
-    int has_win() const {
-        int sq[POS_SIZE] = {};
-        this->reach_sq(sq);
-        REP_POS(i) {
-            if (sq[i] == 1) {
-                return i;
-            }
-        }
+    bool is_win() const {
         return -1;
     }
     bool is_draw() const {
-        return this->all_piece_count() == POS_SIZE;
+        return false;
     }
     bool is_done() const {
-        return this->is_lose() || this->is_draw();
-    }
-    Position next(const Move action) const {
-        auto p = Position(this->enemy_pieces, this->self_pieces, change_turn(this->pos_turn));
-        p.enemy_pieces[action] = 1;
-        return p;
-    }
-    void legal_moves(movelist::MoveList &ml) const {
-        REP_POS(pos) {
-            if (this->self_pieces[pos] == 0 && this->enemy_pieces[pos] == 0) {
-                ml.add(Move(pos));
-            }
-        }
+        return false;
     }
     Color turn() const {
         return this->pos_turn;
     }
-    int self(const int sq) const {
-        return this->self_pieces[sq];
-    }
-    int enemy(const int sq) const {
-        return this->enemy_pieces[sq];
-    }
-    bool is_ok() const {
-        if (this->pos_turn != BLACK && this->pos_turn != WHITE) {
-            return false;
-        }
-        REP_POS(i) {
-            if (this->self(i) == 1 && this->enemy(i) == 1) {
-                return false;
-            }
-        }
-        const auto self_num = this->piece_count(this->self_pieces);
-        const auto enemy_num = this->piece_count(this->enemy_pieces);
-        if (this->turn() == BLACK) {
-            if (self_num != enemy_num) {
-                return false;
-            }
-        } else {
-            if (self_num + 1 != enemy_num) {
-                return false;
-            }
-        }
-        return true;
-    }
-    uint32 hash_key() const {
-        auto hash_key_body = [&](const int sp[], const int ep[]) {
-            uint32 k = 0;
-            REP_POS(i) {
-                k <<= 2;
-                if (sp[i] == 1) {
-                    k |= 1;
-                } else if (ep[i] == 1) {
-                    k |= 2;
-                } else {
-                    k |= 0;
-                }
-            }
-            k <<= 1;
-            if (this->turn() == WHITE) {
-                k |= 1;
-            }
-            return k;
-        };
-        if (this->turn() == BLACK) {
-            return hash_key_body(this->self_pieces, this->enemy_pieces);
-        } else {
-            return hash_key_body(this->enemy_pieces, this->self_pieces);
-        }
-    }
-    std::string str() const {
-        std::string str = to_string(std::bitset<19>(this->hash_key())) + "\n";
-        str += to_string(this->hash_key()) + "\n";
-        str += color_str(this->turn()) + "\n";
-        REP(x, 3) {
-            REP(y, 3) {
-                const auto sq = x * 3 + y;
-                if (this->turn() == BLACK) {
-                    if (this->self_pieces[sq] == 1) {
-                        str += "o";
-                    } else if (this->enemy_pieces[sq] == 1) {
-                        str += "x";
-                    } else {
-                        str += "-";
-                    }
-                } else {
-                    if (this->self_pieces[sq] == 1) {
-                        str += "x";
-                    } else if (this->enemy_pieces[sq] == 1) {
-                        str += "o";
-                    } else {
-                        str += "-";
-                    }
-                }
-            }
-            str += "\n";
-        }
-        return str;
-    }
+    bool is_ok() const;
+    Key hash_key() const;
+    std::string str() const;
 	friend std::ostream& operator<<(std::ostream& os, const Position& pos) {
         os << pos.str();
 		return os;
 	}
     Feature feature() const {
-        Feature feat(FEAT_SIZE, std::vector<int>(POS_SIZE, 0));
-        //channel file rank
-        int reach_point[POS_SIZE] = {};
-        this->reach_sq(reach_point);
-        int dangerous_point[POS_SIZE] = {};
-        this->dangerous_sq(dangerous_point);
-        auto reach_sq_num = this->piece_count(reach_point);
-        auto dangerous_sq_num = this->piece_count(dangerous_point);
-        REP_POS(i) {
-            feat[0][i] = this->self(i);
-            feat[1][i] = this->enemy(i);
-            feat[2][i] = reach_point[i];
-            feat[3][i] = dangerous_point[i];
-            feat[4][i] = (reach_sq_num == 0) ? 1 : 0;
-            feat[5][i] = (reach_sq_num == 1) ? 1 : 0;
-            feat[6][i] = (reach_sq_num == 2) ? 1 : 0;
-            feat[7][i] = (dangerous_sq_num == 0) ? 1 : 0;
-            feat[8][i] = (dangerous_sq_num == 1) ? 1 : 0;
-            feat[9][i] = (dangerous_sq_num == 2) ? 1 : 0;
-        }
+        Feature feat(FEAT_SIZE, std::vector<int>(FILE_SIZE, 0));
         return feat;
     }
+    Position next(const Move action) const;
+    void legal_moves(movelist::MoveList &ml) const;
 private:
-    int self_pieces[POS_SIZE];
-    int enemy_pieces[POS_SIZE];
+    ColorPiece square[SQ_END];//どんな駒が存在しているか？
+    int piece_list_index[SQ_END];//piece_listの何番目か
+
+    Square piece_list[COLOR_SIZE][PIECE_END][2];//駒がどのsqに存在しているか?
+    int piece_list_size[COLOR_SIZE][PIECE_END];//piece_listのどこまで使ったか？
+    Hand hand[COLOR_SIZE];
+
+    Key history[1024];
+    int history_sp;
     Color pos_turn;
+    void put_piece(const Square sq, const ColorPiece color_piece);
+    void remove_piece(const Square sq, const ColorPiece color_piece);
 };
-Position from_hash(const uint32 h) {
+
+Position::Position(const ColorPiece pieces[], const Hand hand[], const Color turn) {
+   REP(i, SQ_END) {
+        this->square[i] = COLOR_EMPTY;
+        this->piece_list_index[i] = -1;
+    }
+    REP_COLOR(col) {
+        REP_PIECE(pc) {
+            this->piece_list[col][pc][0] = this->piece_list[col][pc][1] = SQ_WALL;
+            this->piece_list_size[col][pc] = 0;
+        }
+    }
+    REP(i, 1024) {
+        this->history[i] = 0;
+    }
+    this->history_sp = 0;
+    REP(i, SQUARE_SIZE) {
+        if (pieces[i] != COLOR_EMPTY) {
+            this->put_piece(SQUARE_INDEX[i], pieces[i]);
+        }
+    }
+    this->hand[BLACK] = hand[BLACK];
+    this->hand[WHITE] = hand[WHITE];
+    this->pos_turn = turn;
+}
+
+void Position::put_piece(const Square sq, const ColorPiece color_piece) {
+    ASSERT2(sq_is_ok(sq),{ Tee<<"sq:"<<sq<<std::endl; });
+    ASSERT(color_piece != COLOR_EMPTY);
+    const auto col = piece_color(color_piece);
+    const auto pc = to_piece(color_piece);
+    this->square[sq] = color_piece;
+    this->piece_list_index[sq] = this->piece_list_size[col][pc];
+    this->piece_list[col][pc][this->piece_list_size[col][pc]] = sq;
+    ++this->piece_list_size[col][pc];
+}
+
+void Position::remove_piece(const Square sq, const ColorPiece color_piece) {
+    const auto col = piece_color(color_piece);
+    const auto pc = to_piece(color_piece);
+    this->square[sq] = COLOR_EMPTY;
+    this->piece_list_index[sq] = -1;
+    this->piece_list[col][pc][this->piece_list_size[col][pc]] = SQ_WALL;
+    --this->piece_list_size[col][pc];
+}
+
+Position::Position(const Key key) {
+    ColorPiece pieces[SQUARE_SIZE] = {};
+    Hand hand[COLOR_SIZE];
+    Color turn = BLACK;
+    auto k = key;
+    if (k & 0x1) {
+        turn = WHITE;
+    }
+    auto num = (k >> 1) & 0x3;
+    k >>= 1;
+    REP(i, num) {
+        hand[WHITE] = inc_hand(hand[WHITE],ZOU);
+    }
+    num = (k >> 2) & 0x3;
+    k >>= 2;
+    REP(i, num) {
+        hand[WHITE] = inc_hand(hand[WHITE],KIRIN);
+    }
+    num = (k >>2 ) & 0x3;
+    k >>= 2;
+    REP(i, num) {
+        hand[WHITE] = inc_hand(hand[WHITE],HIYOKO);
+    }
+    num = (k >>2 ) & 0x3;
+    k >>= 2;
+    REP(i, num) {
+        hand[BLACK] = inc_hand(hand[BLACK],ZOU);
+    }
+    num = (k >> 2) & 0x3;
+    k >>= 2;
+    REP(i, num) {
+        hand[BLACK] = inc_hand(hand[BLACK],KIRIN);
+    }
+    num = (k >>2 ) & 0x3;
+    k >>= 2;
+    REP(i, num) {
+        hand[BLACK] = inc_hand(hand[BLACK],HIYOKO);
+    }
+    auto p = SQUARE_INDEX + SQUARE_SIZE;
+    auto i = SQUARE_SIZE;
+    for (auto p = SQUARE_INDEX + SQUARE_SIZE; p != SQUARE_INDEX; --p) {
+        const auto color_piece = static_cast<ColorPiece>((k >> 4) & 0xF);
+        k >>= 4;
+        pieces[--i] = color_piece;
+    }
+    Position(pieces, hand, turn);
+}
+
+Key Position::hash_key() const {
+    Key key = this->turn() == BLACK ? 0ull : 2ull;
+    for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
+        const auto color_piece = this->square[*p];
+        key += (key << 4) + color_piece_no(color_piece);
+    }
+    key += (key << 2) + num_piece(this->hand[BLACK], HIYOKO);
+    key += (key << 2) + num_piece(this->hand[BLACK], KIRIN);
+    key += (key << 2) + num_piece(this->hand[BLACK], ZOU);
+    
+    key += (key << 2) + num_piece(this->hand[WHITE], HIYOKO);
+    key += (key << 2) + num_piece(this->hand[WHITE], KIRIN);
+    key += (key << 2) + num_piece(this->hand[WHITE], ZOU);
+
+    return key;
+}
+
+std::string Position::str() const {
+    std::string ret = "手番:" + color_str(this->turn()) + " hash:" + to_string(this->hash_key()) +"\n";
+    ret += "後手:" + hand_str(this->hand[WHITE]) + "\n";
+    for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
+        const auto color_piece = this->square[*p];
+        const auto col = piece_color(color_piece);
+        const auto piece = to_piece(color_piece);
+        if (piece == EMPTY) {
+            ret += " ";
+        } else if (col == BLACK) {
+            ret += "^";
+        } else {
+            ret += "v";
+        }
+        ret += piece_str(piece);
+        if (sq_file(*p) == FILE_1) { ret += "\n"; }
+    }
+    ret += "先手:" + hand_str(this->hand[BLACK]) + "\n";
+    return ret;
+}
+
+bool Position::is_ok() const {
+    if (this->turn() != BLACK && this->turn() != WHITE) {
+#ifdef DEBUG
+                Tee<<"error turn\n";
+#endif
+        return false;
+    }
+    if (this->history_sp < 0 || this->history_sp > 1024) {
+#ifdef DEBUG
+                Tee<<"error history\n";
+#endif
+        return false;
+    }
+    // square -> piece_list
+    for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
+        const auto sq = *p;
+        const auto color_piece =this->square[sq];
+        if (color_piece != COLOR_EMPTY) {
+            const auto piece = to_piece(color_piece);
+            const auto color = piece_color(color_piece);
+            const auto index = this->piece_list_index[sq];
+            if (index < 0 || index > 1) {
+#ifdef DEBUG
+                Tee<<"error1\n";
+#endif
+                return false;
+            }
+            if (this->piece_list[color][piece][index] != sq) {
+#ifdef DEBUG
+                Tee<<"error2\n";
+#endif
+                return false;
+            }
+        } else {
+            const auto index = this->piece_list_index[sq];
+            if (index != -1) {
+#ifdef DEBUG
+                Tee<<"error3\n";
+                Tee<<sq<<std::endl;
+                Tee<<index<<std::endl;
+#endif
+                return false;
+            }
+        }
+    }
+    // piece_list -> square
+    REP_COLOR(col) {
+        REP_PIECE(piece) {
+            REP(index, this->piece_list_size[col][piece]) {
+                const auto piece_list_sq = this->piece_list[col][piece][index];
+                if (color_piece(piece,col) != this->square[piece_list_sq]) {
+#ifdef DEBUG
+                Tee<<"error4\n";
+#endif
+                    return false;
+                }
+                if (this->piece_list_index[piece_list_sq] != index) {
+#ifdef DEBUG
+                Tee<<"error5\n";
+#endif
+                    return false;
+                }
+            }
+        }
+    }
+    if (!hand_is_ok(this->hand[BLACK])) {
+#ifdef DEBUG
+                Tee<<"error black hand\n";
+#endif
+        return false;
+    } 
+    if (!hand_is_ok(this->hand[WHITE])) {
+#ifdef DEBUG
+                Tee<<"error white hand\n";
+#endif
+        return false;
+    } 
+    return true;
+}
+
+Position Position::next(const Move action) const {
+    return Position();
+}
+void Position::legal_moves(movelist::MoveList &ml) const {
+}
+
+Position from_hash(const Key h) {
     return Position(h);
 }
+
 void test_pos() {
+    ColorPiece pieces[SQUARE_SIZE] = {
+        WHITE_KIRIN, WHITE_LION, WHITE_ZOU,
+        COLOR_EMPTY, WHITE_HIYOKO, COLOR_EMPTY,
+        COLOR_EMPTY, BLACK_HIYOKO, COLOR_EMPTY,
+        BLACK_ZOU, BLACK_LION, BLACK_KIRIN,
+    };
+    Hand hand[COLOR_SIZE] = { HAND_NONE, HAND_NONE };
+    Position pos(pieces,hand,BLACK);
+    ASSERT(pos.is_ok());
+    Tee<<pos.str()<<std::endl;
+}
+void test_common() {
+    ASSERT(change_turn(BLACK) == WHITE);
+    ASSERT(change_turn(WHITE) == BLACK);
+
+    ASSERT(square(FILE_1, RANK_1) == SQ_11);
+    ASSERT(square(FILE_1, RANK_2) == SQ_12);
+    ASSERT(square(FILE_1, RANK_3) == SQ_13);
+    ASSERT(square(FILE_1, RANK_4) == SQ_14);
     
-    Position pos;
-    movelist::MoveList ml;
-    pos.legal_moves(ml);
-    ASSERT2(ml.len() == 9, {
-        Tee<<pos<<std::endl;
-        Tee<<"ml_len:"<<ml.len()<<std::endl;
-    });
-    ASSERT(!pos.is_done());
-    ASSERT(!pos.is_lose());
-    ASSERT(pos.is_ok());
-    Position pos2 = Position(pos.hash_key());
-    ASSERT2(pos.hash_key() == pos2.hash_key(),{
-        Tee<<pos<<std::endl;
-        Tee<<pos2<<std::endl;
-    });
+    ASSERT(square(FILE_2, RANK_1) == SQ_21);
+    ASSERT(square(FILE_2, RANK_2) == SQ_22);
+    ASSERT(square(FILE_2, RANK_3) == SQ_23);
+    ASSERT(square(FILE_2, RANK_4) == SQ_24);
 
-    pos = pos.next(ml[0]);
-    ml.init();
-    pos.legal_moves(ml);
-    ASSERT(ml.len() == 8);
-    ASSERT(pos.turn() == WHITE);
-    ASSERT(pos.is_ok());
-    ASSERT2(pos.enemy(0) == 1,{
-        Tee<<pos<<std::endl;
-        Tee<<pos.self(0)<<std::endl;
-        Tee<<pos.enemy(0)<<std::endl;
-    });
-    pos2 = Position(pos.hash_key());
-    ASSERT2(pos.hash_key() == pos2.hash_key(),{
-        Tee<<pos<<std::endl;
-        Tee<<pos2<<std::endl;
-    });
+    ASSERT(square(FILE_3, RANK_1) == SQ_31);
+    ASSERT(square(FILE_3, RANK_2) == SQ_32);
+    ASSERT(square(FILE_3, RANK_3) == SQ_33);
+    ASSERT(square(FILE_3, RANK_4) == SQ_34);
+
+    ASSERT(sq_file(SQ_11) == FILE_1);    
+    ASSERT(sq_file(SQ_12) == FILE_1);    
+    ASSERT(sq_file(SQ_13) == FILE_1);    
+    ASSERT(sq_file(SQ_14) == FILE_1);
+
+    ASSERT(sq_file(SQ_21) == FILE_2);    
+    ASSERT(sq_file(SQ_22) == FILE_2);    
+    ASSERT(sq_file(SQ_23) == FILE_2);    
+    ASSERT(sq_file(SQ_24) == FILE_2);    
+
+    ASSERT(sq_file(SQ_31) == FILE_3);    
+    ASSERT(sq_file(SQ_32) == FILE_3);    
+    ASSERT(sq_file(SQ_33) == FILE_3);    
+    ASSERT(sq_file(SQ_34) == FILE_3);
     
-    pos = pos.next(Move(3));
-    ml.init();
-    pos.legal_moves(ml);
-    ASSERT(ml.len() == 7);
-    ASSERT(pos.is_ok());
-    ASSERT2(pos.enemy(3) == 1,{
-        Tee<<pos<<std::endl;
-        Tee<<pos.self(0)<<std::endl;
-        Tee<<pos.enemy(0)<<std::endl;
-    });
-    ASSERT(!pos.is_done());
-    ASSERT(!pos.is_lose());
-    pos2 = Position(pos.hash_key());
-    ASSERT2(pos.hash_key() == pos2.hash_key(),{
-        Tee<<pos<<std::endl;
-        Tee<<pos2<<std::endl;
-    });
+    ASSERT(sq_rank(SQ_11) == RANK_1);    
+    ASSERT(sq_rank(SQ_12) == RANK_2);    
+    ASSERT(sq_rank(SQ_13) == RANK_3);    
+    ASSERT(sq_rank(SQ_14) == RANK_4);
 
-    pos = pos.next(Move(1));
-    ml.init();
-    pos.legal_moves(ml);
-    ASSERT(ml.len() == 6);
-    ASSERT(!pos.is_done());
-    ASSERT(!pos.is_lose());
-    ASSERT(pos.is_ok());
-    pos2 = Position(pos.hash_key());
-    ASSERT2(pos.hash_key() == pos2.hash_key(),{
-        Tee<<pos<<std::endl;
-        Tee<<pos2<<std::endl;
-    });
+    ASSERT(sq_rank(SQ_21) == RANK_1);    
+    ASSERT(sq_rank(SQ_22) == RANK_2);    
+    ASSERT(sq_rank(SQ_23) == RANK_3);    
+    ASSERT(sq_rank(SQ_24) == RANK_4);    
 
-    pos = pos.next(Move(4));
-    ml.init();
-    pos.legal_moves(ml);
-    ASSERT(ml.len() == 5);
-    ASSERT(!pos.is_done());
-    ASSERT(!pos.is_lose());
-    ASSERT(pos.is_ok());
-    ASSERT(pos.has_win() >= 0);
-    pos2 = Position(pos.hash_key());
-    ASSERT2(pos.hash_key() == pos2.hash_key(),{
-        Tee<<pos<<std::endl;
-        Tee<<pos2<<std::endl;
-    });
+    ASSERT(sq_rank(SQ_31) == RANK_1);    
+    ASSERT(sq_rank(SQ_32) == RANK_2);    
+    ASSERT(sq_rank(SQ_33) == RANK_3);    
+    ASSERT(sq_rank(SQ_34) == RANK_4);
+    
+    auto h = HAND_NONE;
+    ASSERT(!has_piece(h,HIYOKO));
+    ASSERT(!has_piece(h,KIRIN));
+    ASSERT(!has_piece(h,ZOU));
 
-    pos = pos.next(Move(2));
-    ml.init();
-    pos.legal_moves(ml);
-    ASSERT(ml.len() == 4);
-    ASSERT2(pos.is_done(),{
-        Tee<<pos<<std::endl;
-    });
-    ASSERT(pos.is_lose());
-    ASSERT(pos.is_ok());
-    pos2 = Position(pos.hash_key());
-    ASSERT2(pos.hash_key() == pos2.hash_key(),{
-        Tee<<pos<<std::endl;
-        Tee<<pos2<<std::endl;
-    });
+    auto h_hiyoko = inc_hand(h,HIYOKO);
+    ASSERT(has_piece(h_hiyoko,HIYOKO));
+    ASSERT(!has_piece(h_hiyoko,KIRIN));
+    ASSERT(!has_piece(h_hiyoko,ZOU));
+
+    auto h_hiyoko2 = inc_hand(h_hiyoko, HIYOKO);
+    ASSERT(has_piece(h_hiyoko2,HIYOKO));
+    ASSERT(!has_piece(h_hiyoko2,KIRIN));
+    ASSERT(!has_piece(h_hiyoko2,ZOU));
+
+    ASSERT(dec_hand(h_hiyoko2, HIYOKO) == h_hiyoko);
+    ASSERT(dec_hand(h_hiyoko, HIYOKO) == h);
+
+    auto h_kirin = inc_hand(h, KIRIN);
+    ASSERT(!has_piece(h_kirin,HIYOKO));
+    ASSERT(has_piece(h_kirin,KIRIN));
+    ASSERT(!has_piece(h_kirin,ZOU));
+
+    auto h_kirin2 = inc_hand(h_kirin, KIRIN);
+    ASSERT(!has_piece(h_kirin2,HIYOKO));
+    ASSERT(has_piece(h_kirin2,KIRIN));
+    ASSERT(!has_piece(h_kirin2,ZOU));
+
+    ASSERT(dec_hand(h_kirin2, KIRIN) == h_kirin);
+    ASSERT(dec_hand(h_kirin, KIRIN) == h);
+
+    auto h_zou = inc_hand(h, ZOU);
+    ASSERT(!has_piece(h_zou,HIYOKO));
+    ASSERT(!has_piece(h_zou,KIRIN));
+    ASSERT(has_piece(h_zou,ZOU));
+
+    auto h_zou2 = inc_hand(h_zou, ZOU);
+    ASSERT(!has_piece(h_zou2,HIYOKO));
+    ASSERT(!has_piece(h_zou2,KIRIN));
+    ASSERT(has_piece(h_zou2,ZOU));
+
+    ASSERT(dec_hand(h_zou2, ZOU) == h_zou);
+    ASSERT(dec_hand(h_zou, ZOU) == h);
+
+    auto h_all = inc_hand(h, HIYOKO);
+    h_all = inc_hand(h_all, KIRIN);
+    h_all = inc_hand(h_all, ZOU);
+    
+    ASSERT(has_piece(h_all,HIYOKO));
+    ASSERT(has_piece(h_all,KIRIN));
+    ASSERT(has_piece(h_all,ZOU));
+    
+    h_all = dec_hand(h_all, HIYOKO);
+    h_all = dec_hand(h_all, KIRIN);
+    h_all = dec_hand(h_all, ZOU);
+
+    ASSERT(h_all == h);
+    for(auto *fp = SQUARE_INDEX; *fp != SQ_WALL; ++fp) {
+        // 持ち駒を打つ手
+        const auto from = *fp;
+
+        const auto mh = move(from, HIYOKO);
+        const auto mk = move(from, KIRIN);
+        const auto mz = move(from, ZOU);
+
+        ASSERT(move_to(mh) == from);
+        ASSERT(move_to(mk) == from);
+        ASSERT(move_to(mz) == from);
+
+        ASSERT(move_is_drop(mh));
+        ASSERT(move_is_drop(mk));
+        ASSERT(move_is_drop(mz));
+
+        ASSERT(!move_is_prom(mh));
+        ASSERT(!move_is_prom(mk));
+        ASSERT(!move_is_prom(mz));
+
+        ASSERT(move_is_ok(mh));
+        ASSERT(move_is_ok(mk));
+        ASSERT(move_is_ok(mz));
+
+        ASSERT(sq_is_ok(from));
+        
+        // 盤上の駒を動かす手
+        for(auto *tp = SQUARE_INDEX; *tp != SQ_WALL; ++tp) {
+            const auto to = *tp;
+            const auto m = move(from, to);
+            const auto m2 = move(from, to, true);
+            const auto from2 = move_from(m);
+            const auto to2 = move_to(m);
+            ASSERT(from == from2);
+            ASSERT(to == to2);
+            ASSERT(!move_is_prom(m));
+            ASSERT(!move_is_drop(m));
+            ASSERT(move_is_prom(m2));
+            ASSERT(!move_is_drop(m2));
+            ASSERT(move_is_ok(m));
+            ASSERT(move_is_ok(m2));
+        }
+    }
+    ASSERT(prom(HIYOKO) == NIWATORI);
+    ASSERT(unprom(NIWATORI) == HIYOKO);
+    ASSERT(unprom(ZOU) == ZOU);
+    ASSERT(unprom(KIRIN) == KIRIN);
+    ASSERT(unprom(LION) == LION);
+
+    ASSERT(color_piece(HIYOKO,BLACK) == BLACK_HIYOKO);
+    ASSERT(color_piece(KIRIN,BLACK) == BLACK_KIRIN);
+    ASSERT(color_piece(ZOU, BLACK) == BLACK_ZOU);
+    ASSERT(color_piece(LION, BLACK) == BLACK_LION);
+    ASSERT(color_piece(NIWATORI, BLACK) == BLACK_NIWATORI);
+
+    ASSERT(color_piece(HIYOKO, WHITE) == WHITE_HIYOKO);
+    ASSERT(color_piece(KIRIN, WHITE) == WHITE_KIRIN);
+    ASSERT(color_piece(ZOU, WHITE) == WHITE_ZOU);
+    ASSERT(color_piece(LION, WHITE) == WHITE_LION);
+    ASSERT(color_piece(NIWATORI, WHITE) == WHITE_NIWATORI);
+
 }
 void test_nn() {
-    // Position pos;
-    // std::array<Move,7> ml = {Move(0), Move(1), Move(4), Move(8), Move(6), Move(2), Move(3)};
-    // for (auto m : ml) {
-    //     Tee<<pos<<std::endl;
-    //     auto f = pos.feature();
-    //     auto f0 = torch::tensor(torch::ArrayRef<int>(f[0]));
-    //     auto f1 = torch::tensor(torch::ArrayRef<int>(f[1]));
-    //     auto f2 = torch::tensor(torch::ArrayRef<int>(f[2]));
-    //     auto f3 = torch::tensor(torch::ArrayRef<int>(f[3]));
-    //     auto f_all = torch::cat({f0, f1, f2, f3}).reshape({1,4,3,3});
-    //     Tee<<f_all<<std::endl;
-    //     Tee<<"--------------------------\n";
-    //     pos = pos.next(m);
-    // }
-    // Position pos;
-    // std::vector<at::Tensor> tensor_list;
-    // auto f = pos.feature();
-    // auto f0 = torch::tensor(torch::ArrayRef<int>(f[0]));
-    // auto f1 = torch::tensor(torch::ArrayRef<int>(f[1]));
-    // auto f2 = torch::tensor(torch::ArrayRef<int>(f[2]));
-    // auto f3 = torch::tensor(torch::ArrayRef<int>(f[3]));
-    // auto f_all = torch::cat({f0, f1, f2, f3}).reshape({FEAT_SIZE, 3, 3});
-    // tensor_list.push_back(f_all);
-    // tensor_list.push_back(f_all);
-    // torch::Tensor tsr = torch::stack(tensor_list);
-    // Tee<<tsr<<std::endl;
 }
 }
 #endif

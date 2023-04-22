@@ -33,7 +33,7 @@ public:
         this->ofs.close();
         this->info.clear();
     }
-    void push_back(const uint32 hash, const NNScore sc) {
+    void push_back(const Key hash, const NNScore sc) {
         info.push_back({{"p", hash},{"s", sc}});
     }
     void write_data() {
@@ -46,7 +46,7 @@ private:
 
 extern ReplayBuffer g_replay_buffer;
 
-void push_back(const uint32 hash, const NNScore score) {
+void push_back(const Key hash, const NNScore score) {
     g_replay_buffer.push_back(hash, score);
 }
 
