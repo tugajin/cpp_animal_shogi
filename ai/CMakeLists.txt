@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 project(cpp_animal_shogi CXX)
 
 set(CMAKE_PREFIX_PATH "~/libtorch")
+set(CMAKE_BUILD_TYPE Debug)
 
 # Find Package
 find_package(Torch REQUIRED)
