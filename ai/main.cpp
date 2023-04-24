@@ -1,5 +1,6 @@
 #include "game.hpp"
 #include "movelist.hpp"
+#include "movegen.hpp"
 #include "util.hpp"
 #include "search.hpp"
 #include "selfplay.hpp"
@@ -20,7 +21,8 @@ ReplayBuffer g_replay_buffer;
 int main(int argc, char *argv[]){
     init_table();
     //movelist::test_move_list();
-    game::test_pos();
+    //game::test_pos();
+    gen::test_gen();
     //search::test_search();
     //game::test_nn();
     //selfplay::test_selfplay();

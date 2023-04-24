@@ -67,6 +67,14 @@ enum Square : int {
     SQ_34 = 34,
     SQ_END = 48,
     SQ_WALL = -1,
+    SQ_UP = -8,
+    SQ_DOWN = 8,
+    SQ_LEFT = -1,
+    SQ_RIGHT = 1,
+    SQ_LEFTUP = -9,
+    SQ_RIGHTUP = -7,
+    SQ_LEFTDOWN = 7,
+    SQ_RIGHTDOWN = 9,
 };
 
 enum Piece : int {
@@ -83,6 +91,7 @@ enum Piece : int {
 enum ColorPiece : int {
     BLACK_FLAG = 1 << 5,
     WHITE_FLAG = 1 << 6,
+    COLOR_WALL_FLAG = 1 << 7,
     BLACK_HIYOKO = HIYOKO | BLACK_FLAG, 
     BLACK_KIRIN = KIRIN | BLACK_FLAG, 
     BLACK_ZOU = ZOU | BLACK_FLAG, 
@@ -93,8 +102,9 @@ enum ColorPiece : int {
     WHITE_ZOU = ZOU | WHITE_FLAG, 
     WHITE_LION = LION | WHITE_FLAG, 
     WHITE_NIWATORI = NIWATORI | WHITE_FLAG,
-    COLOR_EMPTY = EMPTY | BLACK_FLAG | WHITE_FLAG,
-    COLOR_PIECE_END = COLOR_EMPTY + 1,
+    COLOR_EMPTY = EMPTY,
+    COLOR_WALL = COLOR_WALL_FLAG,
+    COLOR_PIECE_END = COLOR_WALL + 1,
 };
 
 enum Hand : int { HAND_NONE = 0 };
@@ -109,6 +119,9 @@ Piece& operator++(Piece& org) {
   return org;
 }
 
+Square operator+(Square l, Square r) {
+  return static_cast<Square>(static_cast<int>(l) + static_cast<int>(r));
+}
 constexpr inline int HAND_SHIFT[PIECE_END] = {0, 0, 3, 6, 0, 0};
 constexpr inline int HAND_INC[PIECE_END] = {0, 1 << 0, 1 << 3, 1 << 6, 0, 0 };
 constexpr inline int HAND_MASK[PIECE_END] = {0, 0x3 << 0, 0x3 << 3, 0x3 << 6, 0, 0 };
@@ -238,6 +251,10 @@ inline bool piece_is_ok(const Piece p) {
            p == NIWATORI);
 }
 
+inline bool color_is_ok(const Color c) {
+    return (c == BLACK || c == WHITE);
+}
+
 inline bool move_is_ok(const Move m) {
     if (move_is_drop(m)) {
         const auto piece = move_piece(m);
@@ -277,6 +294,35 @@ inline std::string hand_str(const Hand h) {
     } else {
         return ret;
     }
+}
+
+
+inline std::string sq_str(const Square sq) {
+    switch (sq) {
+        case SQ_11: return "１一";
+        case SQ_12: return "１二";
+        case SQ_13: return "１三";
+        case SQ_14: return "１四";
+        case SQ_21: return "２一";
+        case SQ_22: return "２二";
+        case SQ_23: return "２三";
+        case SQ_24: return "２四";
+        case SQ_31: return "３一";
+        case SQ_32: return "３二";
+        case SQ_33: return "３三";
+        case SQ_34: return "３四";
+        default: return "UNKNOWN_SQ";
+    }
+}
+
+inline std::string move_str(const Move m) {
+    std::string ret = "";
+    if (move_is_drop(m)) {
+        ret +="打:" + sq_str(move_to(m))+":"+piece_str(move_piece(m));
+    } else {
+        ret +="from:"+ sq_str(move_from(m)) + " to:" + sq_str(move_to(m)) +" prom:"+to_string(move_is_prom(m));
+    }
+    return ret;
 }
 
 inline NNScore to_nnscore(const float sc) {

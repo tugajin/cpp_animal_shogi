@@ -34,7 +34,7 @@ public:
     std::string str() const {
         std::string s;
         REP(i, this->len()) {
-            s += to_string(i) + ":" + to_string(static_cast<int>(this->moves[i])) +"\n";
+            s += to_string(i) + ":" + move_str(this->moves[i]) +"\n";
         }
         return s;
     }

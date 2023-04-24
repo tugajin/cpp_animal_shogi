@@ -467,7 +467,8 @@ void UBFMSearcherLocal::evaluate_descent(Node *node) {
 
 void UBFMSearcherLocal::expand(Node *node) {
     auto moveList = movelist::MoveList();
-    node->pos.legal_moves(moveList);
+    //FIXME
+    //node->pos.legal_moves(moveList);
     
     node->child_len = moveList.len();
     node->child_nodes = std::make_unique<std::unique_ptr<Node>[]>(node->child_len);

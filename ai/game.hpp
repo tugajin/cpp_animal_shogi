@@ -6,7 +6,6 @@
 #include <functional>
 #include "common.hpp"
 #include "util.hpp"
-#include "movelist.hpp"
 
 namespace game {
 
@@ -29,7 +28,27 @@ public:
         return false;
     }
     Color turn() const {
-        return this->pos_turn;
+        return this->turn_;
+    }
+    Square piece_list(const Color c, const Piece p, const int index) const {
+        ASSERT(color_is_ok(c));
+        ASSERT(piece_is_ok(p));
+        ASSERT(index >= 0 || index < 2);
+        return this->piece_list_[c][p][index];
+    }
+    int piece_list_size(const Color c, const Piece p) const {
+        ASSERT(color_is_ok(c));
+        ASSERT(piece_is_ok(p));
+        return this->piece_list_size_[c][p];
+    }
+    ColorPiece square(const Square sq) const {
+        ASSERT(sq >= SQ_BEGIN);
+        ASSERT(sq < SQ_END);
+        return this->square_[sq];
+    }
+    Hand hand(const Color c) const {
+        ASSERT(color_is_ok(c));
+        return this->hand_[c];
     }
     bool is_ok() const;
     Key hash_key() const;
@@ -43,45 +62,46 @@ public:
         return feat;
     }
     Position next(const Move action) const;
-    void legal_moves(movelist::MoveList &ml) const;
 private:
-    ColorPiece square[SQ_END];//どんな駒が存在しているか？
-    int piece_list_index[SQ_END];//piece_listの何番目か
+    ColorPiece square_[SQ_END];//どんな駒が存在しているか？
+    int piece_list_index_[SQ_END];//piece_listの何番目か
 
-    Square piece_list[COLOR_SIZE][PIECE_END][2];//駒がどのsqに存在しているか?
-    int piece_list_size[COLOR_SIZE][PIECE_END];//piece_listのどこまで使ったか？
-    Hand hand[COLOR_SIZE];
+    Square piece_list_[COLOR_SIZE][PIECE_END][2];//駒がどのsqに存在しているか?
+    int piece_list_size_[COLOR_SIZE][PIECE_END];//piece_listのどこまで使ったか？
+    Hand hand_[COLOR_SIZE];
 
-    Key history[1024];
-    int history_sp;
-    Color pos_turn;
+    Key history_[1024];
+    int history_sp_;
+    Color turn_;
     void put_piece(const Square sq, const ColorPiece color_piece);
     void remove_piece(const Square sq, const ColorPiece color_piece);
 };
 
 Position::Position(const ColorPiece pieces[], const Hand hand[], const Color turn) {
    REP(i, SQ_END) {
-        this->square[i] = COLOR_EMPTY;
-        this->piece_list_index[i] = -1;
+        this->square_[i] = COLOR_WALL;
+        this->piece_list_index_[i] = -1;
     }
     REP_COLOR(col) {
         REP_PIECE(pc) {
-            this->piece_list[col][pc][0] = this->piece_list[col][pc][1] = SQ_WALL;
-            this->piece_list_size[col][pc] = 0;
+            this->piece_list_[col][pc][0] = this->piece_list_[col][pc][1] = SQ_WALL;
+            this->piece_list_size_[col][pc] = 0;
         }
     }
     REP(i, 1024) {
-        this->history[i] = 0;
+        this->history_[i] = 0;
     }
-    this->history_sp = 0;
+    this->history_sp_ = 0;
     REP(i, SQUARE_SIZE) {
         if (pieces[i] != COLOR_EMPTY) {
             this->put_piece(SQUARE_INDEX[i], pieces[i]);
+        } else {
+            this->square_[SQUARE_INDEX[i]] = COLOR_EMPTY;
         }
     }
-    this->hand[BLACK] = hand[BLACK];
-    this->hand[WHITE] = hand[WHITE];
-    this->pos_turn = turn;
+    this->hand_[BLACK] = hand[BLACK];
+    this->hand_[WHITE] = hand[WHITE];
+    this->turn_ = turn;
 }
 
 void Position::put_piece(const Square sq, const ColorPiece color_piece) {
@@ -89,19 +109,19 @@ void Position::put_piece(const Square sq, const ColorPiece color_piece) {
     ASSERT(color_piece != COLOR_EMPTY);
     const auto col = piece_color(color_piece);
     const auto pc = to_piece(color_piece);
-    this->square[sq] = color_piece;
-    this->piece_list_index[sq] = this->piece_list_size[col][pc];
-    this->piece_list[col][pc][this->piece_list_size[col][pc]] = sq;
-    ++this->piece_list_size[col][pc];
+    this->square_[sq] = color_piece;
+    this->piece_list_index_[sq] = this->piece_list_size_[col][pc];
+    this->piece_list_[col][pc][this->piece_list_size_[col][pc]] = sq;
+    ++this->piece_list_size_[col][pc];
 }
 
 void Position::remove_piece(const Square sq, const ColorPiece color_piece) {
     const auto col = piece_color(color_piece);
     const auto pc = to_piece(color_piece);
-    this->square[sq] = COLOR_EMPTY;
-    this->piece_list_index[sq] = -1;
-    this->piece_list[col][pc][this->piece_list_size[col][pc]] = SQ_WALL;
-    --this->piece_list_size[col][pc];
+    this->square_[sq] = COLOR_EMPTY;
+    this->piece_list_index_[sq] = -1;
+    this->piece_list_[col][pc][this->piece_list_size_[col][pc]] = SQ_WALL;
+    --this->piece_list_size_[col][pc];
 }
 
 Position::Position(const Key key) {
@@ -155,25 +175,25 @@ Position::Position(const Key key) {
 Key Position::hash_key() const {
     Key key = this->turn() == BLACK ? 0ull : 2ull;
     for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
-        const auto color_piece = this->square[*p];
+        const auto color_piece = this->square_[*p];
         key += (key << 4) + color_piece_no(color_piece);
     }
-    key += (key << 2) + num_piece(this->hand[BLACK], HIYOKO);
-    key += (key << 2) + num_piece(this->hand[BLACK], KIRIN);
-    key += (key << 2) + num_piece(this->hand[BLACK], ZOU);
+    key += (key << 2) + num_piece(this->hand_[BLACK], HIYOKO);
+    key += (key << 2) + num_piece(this->hand_[BLACK], KIRIN);
+    key += (key << 2) + num_piece(this->hand_[BLACK], ZOU);
     
-    key += (key << 2) + num_piece(this->hand[WHITE], HIYOKO);
-    key += (key << 2) + num_piece(this->hand[WHITE], KIRIN);
-    key += (key << 2) + num_piece(this->hand[WHITE], ZOU);
+    key += (key << 2) + num_piece(this->hand_[WHITE], HIYOKO);
+    key += (key << 2) + num_piece(this->hand_[WHITE], KIRIN);
+    key += (key << 2) + num_piece(this->hand_[WHITE], ZOU);
 
     return key;
 }
 
 std::string Position::str() const {
     std::string ret = "手番:" + color_str(this->turn()) + " hash:" + to_string(this->hash_key()) +"\n";
-    ret += "後手:" + hand_str(this->hand[WHITE]) + "\n";
+    ret += "後手:" + hand_str(this->hand_[WHITE]) + "\n";
     for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
-        const auto color_piece = this->square[*p];
+        const auto color_piece = this->square_[*p];
         const auto col = piece_color(color_piece);
         const auto piece = to_piece(color_piece);
         if (piece == EMPTY) {
@@ -186,7 +206,7 @@ std::string Position::str() const {
         ret += piece_str(piece);
         if (sq_file(*p) == FILE_1) { ret += "\n"; }
     }
-    ret += "先手:" + hand_str(this->hand[BLACK]) + "\n";
+    ret += "先手:" + hand_str(this->hand_[BLACK]) + "\n";
     return ret;
 }
 
@@ -197,7 +217,7 @@ bool Position::is_ok() const {
 #endif
         return false;
     }
-    if (this->history_sp < 0 || this->history_sp > 1024) {
+    if (this->history_sp_ < 0 || this->history_sp_ > 1024) {
 #ifdef DEBUG
                 Tee<<"error history\n";
 #endif
@@ -206,25 +226,25 @@ bool Position::is_ok() const {
     // square -> piece_list
     for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
         const auto sq = *p;
-        const auto color_piece =this->square[sq];
+        const auto color_piece =this->square_[sq];
         if (color_piece != COLOR_EMPTY) {
             const auto piece = to_piece(color_piece);
             const auto color = piece_color(color_piece);
-            const auto index = this->piece_list_index[sq];
+            const auto index = this->piece_list_index_[sq];
             if (index < 0 || index > 1) {
 #ifdef DEBUG
                 Tee<<"error1\n";
 #endif
                 return false;
             }
-            if (this->piece_list[color][piece][index] != sq) {
+            if (this->piece_list_[color][piece][index] != sq) {
 #ifdef DEBUG
                 Tee<<"error2\n";
 #endif
                 return false;
             }
         } else {
-            const auto index = this->piece_list_index[sq];
+            const auto index = this->piece_list_index_[sq];
             if (index != -1) {
 #ifdef DEBUG
                 Tee<<"error3\n";
@@ -238,15 +258,15 @@ bool Position::is_ok() const {
     // piece_list -> square
     REP_COLOR(col) {
         REP_PIECE(piece) {
-            REP(index, this->piece_list_size[col][piece]) {
-                const auto piece_list_sq = this->piece_list[col][piece][index];
-                if (color_piece(piece,col) != this->square[piece_list_sq]) {
+            REP(index, this->piece_list_size_[col][piece]) {
+                const auto piece_list_sq = this->piece_list_[col][piece][index];
+                if (color_piece(piece,col) != this->square_[piece_list_sq]) {
 #ifdef DEBUG
                 Tee<<"error4\n";
 #endif
                     return false;
                 }
-                if (this->piece_list_index[piece_list_sq] != index) {
+                if (this->piece_list_index_[piece_list_sq] != index) {
 #ifdef DEBUG
                 Tee<<"error5\n";
 #endif
@@ -255,13 +275,13 @@ bool Position::is_ok() const {
             }
         }
     }
-    if (!hand_is_ok(this->hand[BLACK])) {
+    if (!hand_is_ok(this->hand_[BLACK])) {
 #ifdef DEBUG
                 Tee<<"error black hand\n";
 #endif
         return false;
     } 
-    if (!hand_is_ok(this->hand[WHITE])) {
+    if (!hand_is_ok(this->hand_[WHITE])) {
 #ifdef DEBUG
                 Tee<<"error white hand\n";
 #endif
@@ -272,8 +292,6 @@ bool Position::is_ok() const {
 
 Position Position::next(const Move action) const {
     return Position();
-}
-void Position::legal_moves(movelist::MoveList &ml) const {
 }
 
 Position from_hash(const Key h) {
