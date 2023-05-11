@@ -42,6 +42,14 @@ public:
         os << ml.str();
 		return os;
 	}
+    bool contain(const Move m) const {
+        REP(i, this->len()) {
+            if (this->moves[i] == m) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 void test_move_list() {
     MoveList ml;

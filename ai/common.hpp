@@ -67,14 +67,15 @@ enum Square : int {
     SQ_34 = 34,
     SQ_END = 48,
     SQ_WALL = -1,
-    SQ_UP = -8,
-    SQ_DOWN = 8,
-    SQ_LEFT = -1,
-    SQ_RIGHT = 1,
-    SQ_LEFTUP = -9,
-    SQ_RIGHTUP = -7,
-    SQ_LEFTDOWN = 7,
-    SQ_RIGHTDOWN = 9,
+    INC_UP = -8,
+    INC_DOWN = 8,
+    INC_LEFT = -1,
+    INC_RIGHT = 1,
+    INC_LEFTUP = -9,
+    INC_RIGHTUP = -7,
+    INC_LEFTDOWN = 7,
+    INC_RIGHTDOWN = 9,
+    INC_NONE = 0,
 };
 
 enum Piece : int {
@@ -92,19 +93,39 @@ enum ColorPiece : int {
     BLACK_FLAG = 1 << 5,
     WHITE_FLAG = 1 << 6,
     COLOR_WALL_FLAG = 1 << 7,
-    BLACK_HIYOKO = HIYOKO | BLACK_FLAG, 
-    BLACK_KIRIN = KIRIN | BLACK_FLAG, 
-    BLACK_ZOU = ZOU | BLACK_FLAG, 
-    BLACK_LION = LION | BLACK_FLAG, 
-    BLACK_NIWATORI = NIWATORI | BLACK_FLAG,
-    WHITE_HIYOKO = HIYOKO | WHITE_FLAG, 
-    WHITE_KIRIN = KIRIN | WHITE_FLAG, 
-    WHITE_ZOU = ZOU | WHITE_FLAG, 
-    WHITE_LION = LION | WHITE_FLAG, 
-    WHITE_NIWATORI = NIWATORI | WHITE_FLAG,
+    UP_FLAG = 1 << 8,
+    DOWN_FLAG = 1 << 9,
+    LEFT_FLAG = 1 << 10,
+    RIGHT_FLAG = 1 << 11,
+    LEFTUP_FLAG = 1 << 12,
+    LEFTDOWN_FLAG = 1 << 13,
+    RIGHTUP_FLAG = 1 << 14,
+    RIGHTDOWN_FLAG = 1 << 15,
+    BLACK_HIYOKO = HIYOKO | BLACK_FLAG | UP_FLAG, 
+    BLACK_KIRIN = KIRIN | BLACK_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG, 
+    BLACK_ZOU = ZOU | BLACK_FLAG | LEFTUP_FLAG | LEFTDOWN_FLAG | RIGHTUP_FLAG | RIGHTDOWN_FLAG, 
+    BLACK_LION = LION | BLACK_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LEFTUP_FLAG | LEFTDOWN_FLAG | RIGHTUP_FLAG | RIGHTDOWN_FLAG, 
+    BLACK_NIWATORI = NIWATORI | BLACK_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LEFTUP_FLAG | RIGHTUP_FLAG, 
+    WHITE_HIYOKO = HIYOKO | WHITE_FLAG | DOWN_FLAG, 
+    WHITE_KIRIN = KIRIN | WHITE_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG,  
+    WHITE_ZOU = ZOU | WHITE_FLAG | LEFTUP_FLAG | LEFTDOWN_FLAG | RIGHTUP_FLAG | RIGHTDOWN_FLAG, 
+    WHITE_LION = LION | WHITE_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LEFTUP_FLAG | LEFTDOWN_FLAG | RIGHTUP_FLAG | RIGHTDOWN_FLAG,  
+    WHITE_NIWATORI = NIWATORI | WHITE_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LEFTDOWN_FLAG | RIGHTDOWN_FLAG, 
     COLOR_EMPTY = EMPTY,
     COLOR_WALL = COLOR_WALL_FLAG,
-    COLOR_PIECE_END = COLOR_WALL + 1,
+    COLOR_PIECE_END = WHITE_LION + 1,
+
+    CE = COLOR_EMPTY,//短縮形
+    BH = BLACK_HIYOKO,
+    BZ = BLACK_ZOU,
+    BK = BLACK_KIRIN,
+    BN = BLACK_NIWATORI,
+    BL = BLACK_LION,
+    WH = WHITE_HIYOKO,
+    WZ = WHITE_ZOU,
+    WK = WHITE_KIRIN,
+    WN = WHITE_NIWATORI,
+    WL = WHITE_LION,
 };
 
 enum Hand : int { HAND_NONE = 0 };
@@ -122,6 +143,10 @@ Piece& operator++(Piece& org) {
 Square operator+(Square l, Square r) {
   return static_cast<Square>(static_cast<int>(l) + static_cast<int>(r));
 }
+Square operator-(Square l, Square r) {
+  return static_cast<Square>(static_cast<int>(l) - static_cast<int>(r));
+}
+
 constexpr inline int HAND_SHIFT[PIECE_END] = {0, 0, 3, 6, 0, 0};
 constexpr inline int HAND_INC[PIECE_END] = {0, 1 << 0, 1 << 3, 1 << 6, 0, 0 };
 constexpr inline int HAND_MASK[PIECE_END] = {0, 0x3 << 0, 0x3 << 3, 0x3 << 6, 0, 0 };
@@ -133,7 +158,30 @@ constexpr inline Square SQUARE_INDEX[SQUARE_SIZE+1] = {
 };
 
 extern int g_color_piece_no[COLOR_PIECE_END]; 
-extern int g_piece_no_color_piece[12]; 
+extern int g_piece_no_color_piece[12];
+extern int g_piece_color_piece[COLOR_SIZE][12];
+
+constexpr inline int DELTA_OFFSET = 46;
+constexpr inline int DELTA_NB = DELTA_OFFSET * 2 + 1;
+
+extern Square g_delta_inc_all[DELTA_NB];
+extern ColorPiece g_delta_mask[DELTA_NB];
+
+inline Square delta_inc_all(const Square delta) {
+    ASSERT(delta + DELTA_OFFSET >= 0);
+    ASSERT(delta + DELTA_OFFSET < DELTA_NB);
+    return g_delta_inc_all[DELTA_OFFSET + delta];
+}
+
+inline ColorPiece delta_mask(const Square delta) {
+    ASSERT2(delta + DELTA_OFFSET >= 0,{ Tee<<delta<<std::endl; });
+    ASSERT2(delta + DELTA_OFFSET < DELTA_NB,{Tee<<delta<<std::endl;});
+    return g_delta_mask[DELTA_OFFSET + delta];
+}
+
+inline bool pseudo_attack(const ColorPiece p, const Square delta) {
+    return (delta_mask(delta) & p) != 0;
+}
 
 inline std::string color_str(const Color c) {
     return c == BLACK ? "先手" : "後手";
@@ -206,8 +254,8 @@ inline constexpr bool move_is_prom(const Move m) {
     return (m & (1 << 12)) != 0;
 }
 
-inline constexpr ColorPiece color_piece(const Piece p, const Color c) {
-    return static_cast<ColorPiece>(p | ((c+1) << 5));
+inline ColorPiece color_piece(const Piece p, const Color c) {
+    return static_cast<ColorPiece>(g_piece_color_piece[c][p]);
 }
 
 inline constexpr Piece to_piece(const ColorPiece p) {
@@ -218,20 +266,12 @@ inline constexpr Piece prom(const Piece p) {
     return static_cast<Piece>(p | PROM_FLAG);
 }
 
-inline constexpr ColorPiece prom(const ColorPiece p) {
-    return static_cast<ColorPiece>(p | PROM_FLAG);
-}
-
 inline constexpr Piece unprom(const Piece p) {
     return static_cast<Piece>(p & (~PROM_FLAG));
 }
 
-inline constexpr ColorPiece unprom(const ColorPiece p) {
-    return static_cast<ColorPiece>(p & (~PROM_FLAG));
-}
-
 inline constexpr Color piece_color(const ColorPiece p) {
-    return static_cast<Color>(p >> 6);
+    return static_cast<Color>((p >> 6) & 0x1);
 }
 
 inline bool sq_is_ok(const Square sq) {
@@ -344,11 +384,13 @@ inline ColorPiece piece_no_color_piece(const int index) {
 }
 
 void init_table() {
+
     REP(i, COLOR_PIECE_END) {
         g_color_piece_no[i] = -1;
     }
     REP(i, 12) {
         g_piece_no_color_piece[i] = -1;
+        g_piece_color_piece[BLACK][i] = g_piece_color_piece[WHITE][i] = -1;
     }
     auto n = 0;
     g_color_piece_no[COLOR_EMPTY] = ++n;
@@ -378,6 +420,51 @@ void init_table() {
     g_piece_no_color_piece[g_color_piece_no[WHITE_ZOU]] = WHITE_ZOU;
     g_piece_no_color_piece[g_color_piece_no[WHITE_LION]] = WHITE_LION;
     g_piece_no_color_piece[g_color_piece_no[WHITE_NIWATORI]] = WHITE_NIWATORI;
+
+    g_piece_color_piece[BLACK][HIYOKO] = BLACK_HIYOKO;
+    g_piece_color_piece[BLACK][KIRIN] = BLACK_KIRIN;
+    g_piece_color_piece[BLACK][ZOU] = BLACK_ZOU;
+    g_piece_color_piece[BLACK][LION] = BLACK_LION;
+    g_piece_color_piece[BLACK][NIWATORI] = BLACK_NIWATORI;
+
+    g_piece_color_piece[WHITE][HIYOKO] = WHITE_HIYOKO;
+    g_piece_color_piece[WHITE][KIRIN] = WHITE_KIRIN;
+    g_piece_color_piece[WHITE][ZOU] = WHITE_ZOU;
+    g_piece_color_piece[WHITE][LION] = WHITE_LION;
+    g_piece_color_piece[WHITE][NIWATORI] = WHITE_NIWATORI;
+
+    // for(auto *fp = SQUARE_INDEX; *fp != SQ_WALL; ++fp) {
+    //     const auto from = *fp;
+    //     for(auto *tp = SQUARE_INDEX; *tp != SQ_WALL; ++tp) {
+    //         const auto to = *tp;
+    //         if (from == to)
+    //             continue;
+    //         Tee<<from<<":"<<to<<":"<<from-to<<":"<<to-from<<std::endl;
+    //     }
+    // }
+    REP(i, DELTA_NB) {
+        g_delta_inc_all[i] = INC_NONE;
+        g_delta_mask[i] = COLOR_EMPTY;
+    }
+    g_delta_mask[DELTA_OFFSET + INC_DOWN] = DOWN_FLAG;
+    g_delta_mask[DELTA_OFFSET + INC_UP] = UP_FLAG;
+    g_delta_mask[DELTA_OFFSET + INC_LEFT] = LEFT_FLAG;
+    g_delta_mask[DELTA_OFFSET + INC_RIGHT] = RIGHT_FLAG;
+    g_delta_mask[DELTA_OFFSET + INC_LEFTUP] = LEFTUP_FLAG;
+    g_delta_mask[DELTA_OFFSET + INC_LEFTDOWN] = LEFTDOWN_FLAG;
+    g_delta_mask[DELTA_OFFSET + INC_RIGHTUP] = RIGHTUP_FLAG;
+    g_delta_mask[DELTA_OFFSET + INC_RIGHTDOWN] = RIGHTDOWN_FLAG;
+
+    g_delta_inc_all[DELTA_OFFSET + INC_DOWN] = INC_DOWN;
+    g_delta_inc_all[DELTA_OFFSET + INC_UP] = INC_UP;
+    g_delta_inc_all[DELTA_OFFSET + INC_LEFT] = INC_LEFT;
+    g_delta_inc_all[DELTA_OFFSET + INC_RIGHT] = INC_RIGHT;
+    g_delta_inc_all[DELTA_OFFSET + INC_LEFTUP] = INC_LEFTUP;
+    g_delta_inc_all[DELTA_OFFSET + INC_LEFTDOWN] = INC_LEFTDOWN;
+    g_delta_inc_all[DELTA_OFFSET + INC_RIGHTUP] = INC_RIGHTUP;
+    g_delta_inc_all[DELTA_OFFSET + INC_RIGHTDOWN] = INC_RIGHTDOWN;
+    
+
 }
 
 #endif

@@ -6,6 +6,7 @@
 #include <functional>
 #include "common.hpp"
 #include "util.hpp"
+#include "movelist.hpp"
 
 namespace game {
 
@@ -15,17 +16,17 @@ public:
     Position(const ColorPiece pieces[], const Hand hand[], const Color turn);
     Position(const Key h);
     void init_pos();
-    bool is_lose() const {
-        return false;
-    }
-    bool is_win() const {
-        return -1;
-    }
+    bool is_lose() const ;
+
+    bool is_win() const;
     bool is_draw() const {
+        if (this->ply_ >= 1024) {
+            return true;
+        }
         return false;
     }
     bool is_done() const {
-        return false;
+        return (this->is_lose() || this->is_draw());
     }
     Color turn() const {
         return this->turn_;
@@ -53,6 +54,9 @@ public:
     bool is_ok() const;
     Key hash_key() const;
     std::string str() const;
+    Square king_sq (const Color c) const {
+        return this->piece_list_[c][LION][0];
+    }
 	friend std::ostream& operator<<(std::ostream& os, const Position& pos) {
         os << pos.str();
 		return os;
@@ -62,6 +66,7 @@ public:
         return feat;
     }
     Position next(const Move action) const;
+    void dump() const;
 private:
     ColorPiece square_[SQ_END];//どんな駒が存在しているか？
     int piece_list_index_[SQ_END];//piece_listの何番目か
@@ -71,8 +76,9 @@ private:
     Hand hand_[COLOR_SIZE];
 
     Key history_[1024];
-    int history_sp_;
+    int ply_;
     Color turn_;
+    void quiet_move_piece(const Square from, const Square to, ColorPiece color_piece);
     void put_piece(const Square sq, const ColorPiece color_piece);
     void remove_piece(const Square sq, const ColorPiece color_piece);
 };
@@ -91,7 +97,7 @@ Position::Position(const ColorPiece pieces[], const Hand hand[], const Color tur
     REP(i, 1024) {
         this->history_[i] = 0;
     }
-    this->history_sp_ = 0;
+    this->ply_ = 0;
     REP(i, SQUARE_SIZE) {
         if (pieces[i] != COLOR_EMPTY) {
             this->put_piece(SQUARE_INDEX[i], pieces[i]);
@@ -102,6 +108,19 @@ Position::Position(const ColorPiece pieces[], const Hand hand[], const Color tur
     this->hand_[BLACK] = hand[BLACK];
     this->hand_[WHITE] = hand[WHITE];
     this->turn_ = turn;
+}
+
+void Position::quiet_move_piece(const Square from, const Square to, const ColorPiece color_piece) {
+    ASSERT2(sq_is_ok(from),{ Tee<<"sq1:"<<from<<std::endl; });
+    ASSERT2(sq_is_ok(to),{ Tee<<"sq2:"<<to<<std::endl; });
+    ASSERT(color_piece != COLOR_EMPTY);
+    const auto col = piece_color(color_piece);
+    const auto pc = to_piece(color_piece);
+    this->square_[from] = COLOR_EMPTY;
+    this->square_[to] = color_piece;
+    this->piece_list_index_[to] = this->piece_list_index_[from];
+    this->piece_list_[col][pc][this->piece_list_index_[from]] = to;
+    this->piece_list_index_[from] = -1;
 }
 
 void Position::put_piece(const Square sq, const ColorPiece color_piece) {
@@ -118,10 +137,15 @@ void Position::put_piece(const Square sq, const ColorPiece color_piece) {
 void Position::remove_piece(const Square sq, const ColorPiece color_piece) {
     const auto col = piece_color(color_piece);
     const auto pc = to_piece(color_piece);
+    --this->piece_list_size_[col][pc];
+    
+    const auto last_sq = this->piece_list_[col][pc][this->piece_list_size_[col][pc]];
+    const auto removed_index = this->piece_list_index_[sq];
+    this->piece_list_[col][pc][removed_index] = last_sq;
+    this->piece_list_index_[last_sq] = removed_index;
+
     this->square_[sq] = COLOR_EMPTY;
     this->piece_list_index_[sq] = -1;
-    this->piece_list_[col][pc][this->piece_list_size_[col][pc]] = SQ_WALL;
-    --this->piece_list_size_[col][pc];
 }
 
 Position::Position(const Key key) {
@@ -190,7 +214,7 @@ Key Position::hash_key() const {
 }
 
 std::string Position::str() const {
-    std::string ret = "手番:" + color_str(this->turn()) + " hash:" + to_string(this->hash_key()) +"\n";
+    std::string ret = "手番:" + color_str(this->turn()) + " hash:" + to_string(this->hash_key()) + " ply:" + to_string(this->ply_) + "\n";
     ret += "後手:" + hand_str(this->hand_[WHITE]) + "\n";
     for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
         const auto color_piece = this->square_[*p];
@@ -206,7 +230,7 @@ std::string Position::str() const {
         ret += piece_str(piece);
         if (sq_file(*p) == FILE_1) { ret += "\n"; }
     }
-    ret += "先手:" + hand_str(this->hand_[BLACK]) + "\n";
+    ret += "先手:" + hand_str(this->hand_[BLACK]) ;
     return ret;
 }
 
@@ -217,7 +241,7 @@ bool Position::is_ok() const {
 #endif
         return false;
     }
-    if (this->history_sp_ < 0 || this->history_sp_ > 1024) {
+    if (this->ply_ < 0 || this->ply_ > 1024) {
 #ifdef DEBUG
                 Tee<<"error history\n";
 #endif
@@ -237,9 +261,25 @@ bool Position::is_ok() const {
 #endif
                 return false;
             }
+            if (this->piece_list_[color][piece][index] == SQ_WALL) {
+#ifdef DEBUG
+                Tee<<"error1.5\n";
+                Tee<<this->piece_list_[color][piece][index]<<std::endl;
+                Tee<<"color:"<<color<<std::endl;
+                Tee<<"piece:"<<piece<<std::endl;
+                Tee<<"index:"<<index<<std::endl;
+                Tee<<"sq:"<<sq<<std::endl;
+                return false;
+#endif              
+            }
             if (this->piece_list_[color][piece][index] != sq) {
 #ifdef DEBUG
                 Tee<<"error2\n";
+                Tee<<"sq:"<<sq<<std::endl;
+                Tee<<this->piece_list_[color][piece][index]<<std::endl;
+                Tee<<index<<std::endl;
+                Tee<<color<<std::endl;
+                Tee<<piece<<std::endl;
 #endif
                 return false;
             }
@@ -258,6 +298,17 @@ bool Position::is_ok() const {
     // piece_list -> square
     REP_COLOR(col) {
         REP_PIECE(piece) {
+            if (this->piece_list_size_[col][piece] != 0
+            && this->piece_list_size_[col][piece] != 1
+            && this->piece_list_size_[col][piece] != 2) {
+#ifdef DEBUG
+                Tee<<"error size\n";
+                Tee<<this->piece_list_size_[col][piece]<<std::endl;
+                Tee<<col<<std::endl;
+                Tee<<piece<<std::endl;
+#endif              
+                return false;
+            }
             REP(index, this->piece_list_size_[col][piece]) {
                 const auto piece_list_sq = this->piece_list_[col][piece][index];
                 if (color_piece(piece,col) != this->square_[piece_list_sq]) {
@@ -287,29 +338,93 @@ bool Position::is_ok() const {
 #endif
         return false;
     } 
+
     return true;
 }
 
 Position Position::next(const Move action) const {
-    return Position();
+    ASSERT2(this->is_ok(),{
+        Tee<<"prev_next\n";
+        Tee<<this->str()<<std::endl;
+        Tee<<move_str(action)<<std::endl;
+    });
+    Position next_pos = *this;
+    const auto turn = next_pos.turn();
+    if (move_is_drop(action)) {
+        const auto piece = move_piece(action);
+        const auto to = move_to(action);
+        next_pos.put_piece(to, color_piece(piece,turn));
+        next_pos.hand_[turn] = dec_hand(next_pos.hand_[turn], piece);
+    } else {
+        const auto from = move_from(action);
+        const auto to = move_to(action);
+        const auto src_color_piece = next_pos.square(from);
+        auto dst_color_piece = src_color_piece;
+        const auto captured_color_piece = next_pos.square(to);
+        if (captured_color_piece != COLOR_EMPTY) {
+            next_pos.remove_piece(to, captured_color_piece);
+            next_pos.hand_[turn] = inc_hand(next_pos.hand_[turn], unprom(to_piece(captured_color_piece)));
+        }
+        if (move_is_prom(action)) {
+            const auto src_piece = to_piece(src_color_piece);
+            const auto dst_piece = prom(src_piece);
+            dst_color_piece = color_piece(dst_piece, turn);
+            next_pos.remove_piece(from, src_color_piece);
+            next_pos.put_piece(to, dst_color_piece);
+        } else {
+            next_pos.quiet_move_piece(from, to, src_color_piece);
+        }
+    }
+    ++next_pos.ply_;
+    next_pos.turn_ = change_turn(turn);
+    ASSERT2(next_pos.is_ok(),{
+        //Tee<<"prev\n";
+        //Tee<<*this<<std::endl;
+        Tee<<"after next\n";
+        Tee<<next_pos<<std::endl;
+        Tee<<move_str(action)<<std::endl;
+        this->dump();
+    });
+    return next_pos;
+}
+
+void Position::dump() const {
+    Tee<<"dump:\n";
+    Tee<<"square\n";
+    REP(sq, SQ_END) {
+        if (sq % 8 == 0) { Tee<<"\n";}
+        Tee<<to_string(static_cast<int>(this->square_[sq]))+",";
+    }
+    Tee<<"\nsquare_index\n";
+    REP(sq, SQ_END) {
+        if (sq % 8 == 0) { Tee<<"\n";}
+        Tee<<to_string(static_cast<int>(this->piece_list_index_[sq]))+",";
+    }
+    Tee<<"\npiece_size\n";
+    REP_COLOR(col) {
+        REP_PIECE(pc) {
+            Tee << to_string(this->piece_list_size_[col][pc])+",";
+        }
+        Tee<<"\n";
+    }
+    Tee<<"piece_list\n";
+    REP_COLOR(col) {
+        REP_PIECE(pc) {
+            Tee<<piece_str(Piece(pc))<<":";
+            REP(index, 2) {
+                Tee<<to_string(this->piece_list_[col][pc][index]) + ",";
+            }
+            Tee<<"\n";
+        }
+    }
+    Tee<<"black_hand:"<<static_cast<int>(this->hand_[BLACK])<<std::endl;
+    Tee<<"white_hand:"<<static_cast<int>(this->hand_[WHITE])<<std::endl;
 }
 
 Position from_hash(const Key h) {
     return Position(h);
 }
 
-void test_pos() {
-    ColorPiece pieces[SQUARE_SIZE] = {
-        WHITE_KIRIN, WHITE_LION, WHITE_ZOU,
-        COLOR_EMPTY, WHITE_HIYOKO, COLOR_EMPTY,
-        COLOR_EMPTY, BLACK_HIYOKO, COLOR_EMPTY,
-        BLACK_ZOU, BLACK_LION, BLACK_KIRIN,
-    };
-    Hand hand[COLOR_SIZE] = { HAND_NONE, HAND_NONE };
-    Position pos(pieces,hand,BLACK);
-    ASSERT(pos.is_ok());
-    Tee<<pos.str()<<std::endl;
-}
 void test_common() {
     ASSERT(change_turn(BLACK) == WHITE);
     ASSERT(change_turn(WHITE) == BLACK);
