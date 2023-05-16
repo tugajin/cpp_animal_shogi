@@ -15,17 +15,14 @@
 // 40	41	42	43	44	45	46	47
 
 
-constexpr inline int FEAT_SIZE = 10;
 constexpr inline int SQUARE_SIZE = 12;
 
-#define REP(i,e) for (auto (i) = 0; (i) < (e); ++(i))
-#define REP_FILE(i) for (auto (i) = FILE_3; (i) < FILE_SIZE; ++(i)) 
-#define REP_RANK(i) for (auto (i) = RANK_1; (i) < RANK_SIZE; ++(i)) 
-#define REP_COLOR(i) for (auto (i) = BLACK; (i) < COLOR_SIZE; ++(i)) 
-#define REP_PIECE(i) for (auto (i) = HIYOKO; (i) < PIECE_END; ++(i)) 
+#define REP(i,e) for (auto i = 0; (i) < (e); ++(i))
+#define REP_FILE(i) for (auto i = FILE_3; (i) < FILE_SIZE; ++(i)) 
+#define REP_RANK(i) for (auto i = RANK_1; (i) < RANK_SIZE; ++(i)) 
+#define REP_COLOR(i) for (auto i = BLACK; (i) < COLOR_SIZE; ++(i)) 
+#define REP_PIECE(i) for (auto i = HIYOKO; (i) < PIECE_END; ++(i)) 
 
-typedef std::vector<std::vector<int>> Feature;
-typedef double NNScore;
 typedef uint64 Key;
 
 enum Move : int {
@@ -33,7 +30,7 @@ enum Move : int {
 };
 
 enum Color : int {
-    BLACK = 0, WHITE = 1, COLOR_SIZE = 2,
+    BLACK = 0, WHITE = 1, COLOR_SIZE = 2, COLOR_NONE = 3,
 };
 
 enum File : int {
@@ -128,7 +125,12 @@ enum ColorPiece : int {
     WL = WHITE_LION,
 };
 
-enum Hand : int { HAND_NONE = 0 };
+enum Hand : int { 
+    HAND_NONE = 0,
+    HAND_HIYOKO = 1 << 0,
+    HAND_KIRIN = 1 << 3,
+    HAND_ZOU = 1 << 6,
+};
 
 Color& operator++(Color& org) {
   org = static_cast<Color>(org + 1);
@@ -148,7 +150,7 @@ Square operator-(Square l, Square r) {
 }
 
 constexpr inline int HAND_SHIFT[PIECE_END] = {0, 0, 3, 6, 0, 0};
-constexpr inline int HAND_INC[PIECE_END] = {0, 1 << 0, 1 << 3, 1 << 6, 0, 0 };
+constexpr inline int HAND_INC[PIECE_END] = {0, HAND_HIYOKO, HAND_KIRIN, HAND_ZOU, 0, 0 };
 constexpr inline int HAND_MASK[PIECE_END] = {0, 0x3 << 0, 0x3 << 3, 0x3 << 6, 0, 0 };
 constexpr inline Square SQUARE_INDEX[SQUARE_SIZE+1] = { 
     SQ_31, SQ_21, SQ_11,
@@ -204,6 +206,34 @@ inline constexpr Rank sq_rank(const Square sq) {
 
 inline constexpr File sq_file(const Square sq) {
     return static_cast<File>((sq-10) & 7);
+}
+
+inline Square invert_sq(const Square sq) {
+    return Square(46) - sq;
+}
+inline int sq_to_index_debug(const Square sq) {
+   switch(sq) {
+        case SQ_31: return 0;
+        case SQ_21: return 1;
+        case SQ_11: return 2;
+        case SQ_32: return 3;
+        case SQ_22: return 4;
+        case SQ_12: return 5;
+        case SQ_33: return 6;
+        case SQ_23: return 7;
+        case SQ_13: return 8;
+        case SQ_34: return 9;
+        case SQ_24: return 10;
+        case SQ_14: return 11;
+        default: return -1;
+    }
+}
+inline int sq_to_index(const Square sq) {
+    const auto f = (sq & 0x7) - 2;
+    const auto r = (sq >> 3) - 1;
+    const auto index = f + (r << 1) + r;// f + r*3
+    ASSERT(index == sq_to_index_debug(sq));
+    return index;
 }
 
 inline constexpr Hand inc_hand(const Hand h, const Piece p) {
@@ -363,16 +393,6 @@ inline std::string move_str(const Move m) {
         ret +="from:"+ sq_str(move_from(m)) + " to:" + sq_str(move_to(m)) +" prom:"+to_string(move_is_prom(m));
     }
     return ret;
-}
-
-inline NNScore to_nnscore(const float sc) {
-    auto score = static_cast<int>(sc * 10000);
-    if (score >= 10000) {
-        score = 9999;
-    } else if (score <= -10000) {
-        score = -9999;
-    }
-    return static_cast<NNScore>(static_cast<double>(score) / 10000.0);
 }
 
 inline int color_piece_no(const ColorPiece p) {

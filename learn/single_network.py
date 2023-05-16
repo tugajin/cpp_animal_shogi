@@ -13,8 +13,8 @@ from game import *
 # パラメータの準備
 DN_FILTERS  = 256 # 畳み込み層のカーネル数（本家は256）
 DN_RESIDUAL_NUM =  16 # 残差ブロックの数（本家は19）
-DN_INPUT_SHAPE = (3, 3, 10) # 入力シェイプ
-DN_OUTPUT_SIZE = 9 # 配置先(3*3)
+DN_INPUT_SHAPE = (3, 4, 42) # 入力シェイプ
+DN_OUTPUT_SIZE = 3 * 4 * 5 * 8 # 配置先(3*4) * 駒の種類 * 移動方向
 
 class ResNetBlock(nn.Module):
     def __init__(self, channels):
@@ -36,7 +36,7 @@ class ResNetBlock(nn.Module):
 class SingleNet(nn.Module):
     def __init__(self, blocks=3, channels=192, fcl=256):
         super(SingleNet, self).__init__()
-        self.convl1 = nn.Conv2d(in_channels=10, out_channels=channels, kernel_size=3, padding=1, bias=False)
+        self.convl1 = nn.Conv2d(in_channels=42, out_channels=channels, kernel_size=3, padding=1, bias=False)
         
         self.norm1 = nn.BatchNorm2d(channels)
 
@@ -46,7 +46,7 @@ class SingleNet(nn.Module):
         # value head
         self.value_conv1 = nn.Conv2d(in_channels=channels, out_channels=DN_OUTPUT_SIZE, kernel_size=1, bias=False)
         self.value_norm1 = nn.BatchNorm2d(DN_OUTPUT_SIZE)
-        self.value_fc1 = nn.Linear(81, fcl)
+        self.value_fc1 = nn.Linear(DN_INPUT_SHAPE[0] * DN_INPUT_SHAPE[1] * DN_OUTPUT_SIZE, fcl)
         self.value_fc2 = nn.Linear(fcl, 1)
 
     def forward(self, feature1):

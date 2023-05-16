@@ -14,9 +14,10 @@
 #include "game.hpp"
 #include "selfplay.hpp"
 #include "thread.hpp"
+#include "nn.hpp"
 
 namespace selfplay {
-void push_back(const Key hash, const NNScore score);
+void push_back(const Key hash, const nn::NNScore score);
 }
 
 namespace ubfm {
@@ -28,10 +29,10 @@ enum NodeState : int {
     NodeUnknown = -1
 };
 
-inline NNScore score_win(const int ply) {
-    return NNScore(0.9999) - NNScore(static_cast<double>(ply) / 100.0);
+inline nn::NNScore score_win(const int ply) {
+    return nn::NNScore(0.9999) - nn::NNScore(static_cast<double>(ply) / 2000.0);
 }
-inline NNScore score_lose(const int ply) {
+inline nn::NNScore score_lose(const int ply) {
     return -score_win(ply);
 }
 
@@ -55,14 +56,14 @@ std::ostream& operator<<(std::ostream& os, const NodeState n) {
 }
 class Node {
 public:
-    Node() : w(0.0),
-             n(0),
+    Node() : child_nodes(nullptr),
              parent_move(MOVE_NONE),
              best_move(MOVE_NONE),
+             state(NodeUnknown),
+             w(0.0),
+             n(0),
              child_len(-1),
-             child_nodes(nullptr),
-             ply(-1),
-             state(NodeUnknown) {}
+             ply(-1){}
    Node( const Node & ) = delete ;
    Node & operator = ( const Node & ) = delete ;
    Node & operator = ( const Node && n) = delete;
@@ -124,7 +125,7 @@ public:
     Move parent_move;
     Move best_move;
     NodeState state;
-    NNScore w;
+    nn::NNScore w;
     uint32 n;
     int child_len;
     int ply;
@@ -148,7 +149,7 @@ public:
     //    // this->root_node = std::move(local.root_node);
     //     return *this;
     // }
-    template<bool is_descent = false>void search(const game::Position &pos, const int simulation_num);
+    template<bool is_descent = false>void search(const int simulation_num);
     bool is_ok();
     void run();
     void join();
@@ -161,16 +162,16 @@ private:
     Node *next_child2(const Node *node) const;
     void update_node(Node *node);
     void add_node(const game::Position &pos,const Move parent_move, int ply);
-    int thread_id;
-    std::thread *thread;
     UBFMSearcherGroup *group;
+    std::thread *thread;
+    int thread_id;
 };
 
 class UBFMSearcherGroup {
 public:
-    UBFMSearcherGroup(const int id): 
-                    gpu_id(id),
-                    device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU, id){
+    UBFMSearcherGroup(const int id):
+                    device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU, id) ,
+                    gpu_id(id){
         if (torch::cuda::is_available()) {
             Tee<<"GPU:"<<id<<"\n";
         } else {
@@ -221,7 +222,7 @@ private:
 
 extern UBFMSearcherGlobal g_searcher_global;
 
-NNScore noise(double div = 1000) {
+nn::NNScore noise(double div = 1000) {
     auto sign = rand_double();
     auto value = rand_double() / div;
     return sign >= 0.5 ? value : -value;
@@ -300,9 +301,9 @@ void UBFMSearcherGlobal::choice_best_move() {
 }
 
 void UBFMSearcherGlobal::choice_best_move_e_greedy() {
-    std::vector<NNScore> scores;
+    std::vector<nn::NNScore> scores;
     REP(i, this->root_node.child_len) {
-        scores.push_back(NNScore(0.0));
+        scores.push_back(nn::NNScore(0.0));
     }
     auto find_resolved_flag = false;
     REP(i, this->root_node.child_len) {
@@ -310,13 +311,13 @@ void UBFMSearcherGlobal::choice_best_move_e_greedy() {
         if (child->is_resolved()) {
             if (child->is_lose()) {
                 REP(i, this->root_node.child_len) {
-                    scores[i] = NNScore(0.0);
+                    scores[i] = nn::NNScore(0.0);
                 }
                 scores[i] = score_win(0);
                 find_resolved_flag = true;
                 break;
             } else if (child->is_draw()) {
-                scores[i] = NNScore(0.0) + (rand_double() / 1000);
+                scores[i] = nn::NNScore(0.0) + (rand_double() / 1000);
             } else if (child->is_win()) {
                 scores[i] = score_lose(0) + (rand_double() / 1000);
             }
@@ -378,9 +379,9 @@ void UBFMSearcherLocal::run() {
         //Tee<<"thread:"<<this->thread_id<<" start"<<std::endl;
         if (g_searcher_global.IS_DESCENT) {
             assert(g_searcher_global.DESCENT_PO_NUM > 0);
-            this->search<true>(g_searcher_global.root_node.pos, g_searcher_global.DESCENT_PO_NUM);
+            this->search<true>(g_searcher_global.DESCENT_PO_NUM);
         } else {
-            this->search<false>(g_searcher_global.root_node.pos, int(2000 / g_searcher_global.THREAD_NUM));
+            this->search<false>(int(2000 / g_searcher_global.THREAD_NUM));
         }
     });
 }
@@ -389,7 +390,7 @@ void UBFMSearcherLocal::join() {
     delete this->thread;
 }
 
-template<bool is_descent>void UBFMSearcherLocal::search(const game::Position &pos, const int simulation_num) {
+template<bool is_descent>void UBFMSearcherLocal::search(const int simulation_num) {
     
     const auto is_out = (this->thread_id == 0) && (this->group->gpu_id == 0);
     
@@ -420,14 +421,22 @@ void UBFMSearcherLocal::evaluate(Node *node) {
     //     return;
     // }
     ASSERT(node != nullptr);
+    ASSERT(std::fabs(node->w) <= 1);
     node->lock_node.lock();
+    if (node->pos.is_draw()) {
+        node->state = NodeState::NodeDraw;
+        node->lock_node.unlock();
+        return;
+    } 
+    if (node->pos.is_lose()) {
+        node->state = NodeState::NodeLose;
+        node->lock_node.unlock();
+        return;
+    }
     if (node->is_resolved()) {
         node->lock_node.unlock();
         return;
     }
-    ASSERT2(!node->pos.is_done(),{
-        Tee<<node->str()<<std::endl;
-    });
     if (node->is_terminal()) {
         this->expand(node);
         this->predict(node);
@@ -445,9 +454,15 @@ void UBFMSearcherLocal::evaluate(Node *node) {
 
 void UBFMSearcherLocal::evaluate_descent(Node *node) {
     //ASSERT(!node->is_resolved());
-    ASSERT2(!node->pos.is_done(),{
-        Tee<<node->pos<<std::endl;
-    });
+    ASSERT(std::fabs(node->w) <= 1);
+    if (node->pos.is_draw()) {
+        node->state = NodeState::NodeDraw;
+        return;
+    } 
+    if (node->pos.is_lose()) {
+        node->state = NodeState::NodeLose;
+        return;
+    }
     if (node->is_terminal()) {
         this->expand(node);
         this->predict(node);
@@ -467,8 +482,7 @@ void UBFMSearcherLocal::evaluate_descent(Node *node) {
 
 void UBFMSearcherLocal::expand(Node *node) {
     auto moveList = movelist::MoveList();
-    //FIXME
-    //node->pos.legal_moves(moveList);
+    gen::legal_moves(node->pos, moveList);
     
     node->child_len = moveList.len();
     node->child_nodes = std::make_unique<std::unique_ptr<Node>[]>(node->child_len);
@@ -483,16 +497,21 @@ void UBFMSearcherLocal::expand(Node *node) {
 }
 void UBFMSearcherLocal::predict(Node *node) {
     
+    ASSERT2(node->child_len > 0,{
+        Tee<<node->pos<<std::endl;
+    });
+
     std::vector<at::Tensor> tensor_list;
+    
     REP(i, node->child_len) {
         auto child = node->child(i);
         auto &pos = child->pos;
-        auto f = pos.feature();
+        auto f = nn::feature(pos);
         std::vector<at::Tensor> v;
-        REP(j, FEAT_SIZE) {
+        REP(j, nn::FEAT_SIZE) {
             v.push_back(torch::tensor(torch::ArrayRef<int>(f[j])));
         }
-        auto f_all = torch::stack(v).reshape({FEAT_SIZE, 3, 3});
+        auto f_all = torch::stack(v).reshape({nn::FEAT_SIZE, FILE_SIZE, RANK_SIZE});
         tensor_list.push_back(f_all);
     }
     auto feat_tensor = torch::stack(tensor_list);
@@ -508,17 +527,17 @@ void UBFMSearcherLocal::predict(Node *node) {
 
     REP(i, node->child_len) {
         auto state = NodeUnknown;
-        auto score = to_nnscore(output[i][0].item<float>());     
-        if (score >= NNScore(1.0)) {
-            score = NNScore(0.8999);
-        } else if (score <= NNScore(-1.0)) {
-            score = NNScore(-0.8999);
+        auto score = nn::to_nnscore(output[i][0].item<float>());     
+        if (score >= nn::NNScore(1.0)) {
+            score = nn::NNScore(0.8999);
+        } else if (score <= nn::NNScore(-1.0)) {
+            score = nn::NNScore(-0.8999);
         }
         auto child = node->child(i);
         auto &pos = child->pos;
 
         if (pos.is_draw()) {
-            score = NNScore(0.0);
+            score = nn::NNScore(0.0);
             state = NodeDraw;
         } else if (pos.is_lose()) {
             score = score_lose(child->ply);
@@ -527,6 +546,9 @@ void UBFMSearcherLocal::predict(Node *node) {
             score = score_win(child->ply);
             state = NodeWin;
         }*/
+        ASSERT2(std::fabs(score)<=1,{
+            Tee<<child->ply<<std::endl;
+        });
         child->n += 1;
         child->w = score;
         child->state = state;
@@ -535,10 +557,11 @@ void UBFMSearcherLocal::predict(Node *node) {
 Node *UBFMSearcherLocal::next_child(const Node *node) const {
     ASSERT(node->child_len >= 0);
     Node *best_child = nullptr;
-    NNScore best_score = NNScore(-1);
+    nn::NNScore best_score = nn::NNScore(-1);
     auto min_num = UINT32_MAX;
     REP(i, node->child_len) {
         auto child = node->child(i);
+        ASSERT(std::fabs(child->w)<=1); 
         if (child->is_resolved()) { continue; }
         auto score = -child->w;
         if (score > best_score) {
@@ -559,8 +582,8 @@ Node *UBFMSearcherLocal::next_child(const Node *node) const {
 }
 Node *UBFMSearcherLocal::next_child2(const Node *node) const {
     Node *best_child = nullptr;
-    NNScore best_score = NNScore(-1);
-    auto max_num = 0;
+    nn::NNScore best_score = nn::NNScore(-1);
+    auto max_num = 0u;
     REP(i, node->child_len) {
         auto child = node->child(i);
         if (child->is_resolved()) { continue; }
@@ -581,8 +604,8 @@ Node *UBFMSearcherLocal::next_child2(const Node *node) const {
 void UBFMSearcherLocal::update_node(Node *node) {
 
     Node *best_child = nullptr;
-    auto max_value = NNScore(-1);
-    auto max_num = -1;
+    auto max_value = nn::NNScore(-1);
+    auto max_num = 0u;
     auto lose_num = 0;
     auto draw_num = 0;
     const auto child_len = node->child_len;
@@ -595,7 +618,7 @@ void UBFMSearcherLocal::update_node(Node *node) {
 
     REP(i, child_len) {
         auto child = node->child(i);
-
+        ASSERT(std::fabs(child->w)<=1);
         if (child->is_resolved()) {
 
             //子供に負けを見つけた→つまり勝ちなので終わり
@@ -620,6 +643,7 @@ void UBFMSearcherLocal::update_node(Node *node) {
             max_value = -child->w;
             max_num = child->n;
         } else if (-child->w == max_value) {
+            ASSERT(child->n > 0);
             if (child->n > max_num) {
                 best_child = child;
                 max_value = -child->w;
@@ -627,11 +651,16 @@ void UBFMSearcherLocal::update_node(Node *node) {
             }
         }
     }
-    ASSERT(best_child != nullptr);
+    ASSERT2(best_child != nullptr,{
+        Tee<<node->pos<<std::endl;
+        Tee<<child_len<<std::endl;
+        Tee<<node->pos.is_done()<<std::endl;
+        Tee<<node->str()<<std::endl;
+    });
     
     if (child_len == draw_num) {
         node->state = NodeDraw;
-        node->w = NNScore(0.0);
+        node->w = nn::NNScore(0.0);
         return;
     } else if (child_len == lose_num) {
         node->state = NodeLose;
@@ -640,7 +669,7 @@ void UBFMSearcherLocal::update_node(Node *node) {
         return;
     } else if (child_len == (draw_num + lose_num)) {
         node->state = NodeDraw;
-        node->w = NNScore(0.0);
+        node->w = nn::NNScore(0.0);
         return;
     }
     node->w = -best_child->w;
@@ -649,7 +678,7 @@ void UBFMSearcherLocal::update_node(Node *node) {
 
 
 void UBFMSearcherGlobal::add_replay_buffer(const Node * node) const {
-    selfplay::push_back(node->pos.hash_key(), node->w);
+    selfplay::push_back(hash::hash_key(node->pos), node->w);
     REP(i, node->child_len) {
         auto child = node->child(i);
         if (child->is_terminal() && !child->is_resolved()) {
@@ -674,14 +703,14 @@ void test_ubfm2() {
     auto module = torch::jit::load("./model/best_single_jit.pt",device);
     game::Position p;
     auto ff = [&](game::Position pos) {
-        auto f = pos.feature();
+        auto f = nn::feature(pos);
         std::vector<at::Tensor> v;
-        REP(i, FEAT_SIZE) {
+        REP(i, nn::FEAT_SIZE) {
             auto t = torch::tensor(torch::ArrayRef<int>((f[i])));
             v.push_back(t);
         }
         auto f_all = torch::stack(v,0);
-        f_all = f_all.reshape({1, FEAT_SIZE, 3, 3});
+        f_all = f_all.reshape({1, nn::FEAT_SIZE, 3, 3});
         f_all = f_all.to(device,torch::kFloat);
         std::vector<torch::jit::IValue> inputs;
         inputs.push_back(f_all);
@@ -690,14 +719,6 @@ void test_ubfm2() {
         Tee<<output.item<float>()<<std::endl;
     };
     ff(p);
-    ff(game::Position(8193));
-    ff(game::Position(73728));
-    ff(game::Position(74241));
-    ff(game::Position(74304));
-    ff(game::Position(336384));
-    ff(game::Position(336000));
-    ff(game::Position(163920));
-    ff(game::Position(8208));
 }
 
 

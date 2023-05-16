@@ -1,5 +1,5 @@
-#ifndef __MOVECHECK__HPP__
-#define __MOVECHECK__HPP__
+#ifndef __MOVECHECK_HPP__
+#define __MOVECHECK_HPP__
 
 #include "game.hpp"
 #include "movelist.hpp"

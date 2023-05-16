@@ -7,6 +7,8 @@
 #include "ubfm.hpp"
 #include "attack.hpp"
 #include "matesearch.hpp"
+#include "hash.hpp"
+#include "nn.hpp"
 
 TeeStream Tee;
 
@@ -24,18 +26,19 @@ namespace selfplay {
 ReplayBuffer g_replay_buffer;
 }
 
-int main(int argc, char *argv[]){
+int main(int /*argc*/, char **/*argv*/){
     init_table();
+    //hash::test_hash();
     //mate::test_mate();
     //movelist::test_move_list();
     //game::test_common();
-    //attack::test_attack();
-    gen::test_gen3();
+    //attack::test_attack2();
+    //gen::test_gen3();
     //gen::test_gen3();
     //search::test_search();
-    //game::test_nn();
     //selfplay::test_selfplay();
     //ubfm::test_ubfm();
-    //selfplay::execute_selfplay();
+    selfplay::execute_selfplay();
+    //nn::test_nn();
     return 0;
 }

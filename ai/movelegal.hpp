@@ -1,4 +1,4 @@
-#ifndef __MOVELEGAL__HPP__
+#ifndef __MOVELEGAL_HPP__
 #define __MOVELEGAL_HPP__
 
 #include "game.hpp"
@@ -9,13 +9,17 @@
 #include "moveevasion.hpp"
 #include "movecheck.hpp"
 #include "matesearch.hpp"
+#include "hash.hpp"
 
 #include <unordered_map>
 
 namespace gen {
-void legal_moves(const game::Position &pos, movelist::MoveList &ml) {
+template<bool is_exists = false> bool legal_moves(const game::Position &pos, movelist::MoveList &ml) {
+    auto result = false;
     if (attack::in_checked(pos)) {
-        evasion_moves(pos, ml);
+        result = evasion_moves<is_exists>(pos, ml);
+#if DEBUG
+    if (!is_exists) {
         movelist::MoveList all_ml;
         pos_moves(pos, all_ml);
         REP(i, ml.len()) {
@@ -39,13 +43,23 @@ void legal_moves(const game::Position &pos, movelist::MoveList &ml) {
             Tee<<ml<<std::endl;
         })
     } else {
-        pos_moves(pos, ml);
-        drop_moves(pos, ml);
-
+        movelist::MoveList tmp;
+        evasion_moves(pos, tmp);
+        ASSERT2(result == (tmp.len() !=0),{
+            Tee<<pos<<std::endl;
+            Tee<<tmp<<std::endl;
+            Tee<<result<<std::endl;
+        });
+    }
+#endif
+    } else {
+        result = pos_moves<is_exists>(pos, ml);
+        result |= drop_moves<is_exists>(pos, ml);
+#if DEBUG
         movelist::MoveList check_ml;
         pos_check_moves(pos, check_ml);
         drop_check_moves(pos, check_ml);
-
+    if (!is_exists) {
         REP(i, ml.len()) {
             auto next = pos.next(ml[i]);
             if(attack::in_checked(next)) {
@@ -57,7 +71,20 @@ void legal_moves(const game::Position &pos, movelist::MoveList &ml) {
                 }
             }
         }
+    } else {
+        movelist::MoveList tmp;
+        pos_moves(pos, tmp);
+        drop_moves(pos, tmp);
+        ASSERT(result == (tmp.len() !=0));
     }
+#endif
+    }
+    return result;
+}
+
+bool has_legal(const game::Position &pos) {
+    movelist::MoveList dummy;
+    return legal_moves<true>(pos, dummy);
 }
 
 void test_gen() {
@@ -329,9 +356,10 @@ void test_gen2() {
 void test_gen3() {
     
     std::unordered_map<Key, int> key_dict;
-
+    uint64 mate_num = 0;
+    uint64 draw_num = 0;
     REP(i, 999999999999) {
-        Tee<<i<<":"<<key_dict.size()<<"\r";
+        Tee<<i<<":"<<key_dict.size()<<" mate:"<<mate_num<<" draw:"<<draw_num<<"\r";
         ColorPiece pieces[SQUARE_SIZE] = {
             WHITE_KIRIN, WHITE_LION, WHITE_ZOU,
             COLOR_EMPTY, WHITE_HIYOKO, COLOR_EMPTY,
@@ -341,25 +369,35 @@ void test_gen3() {
         Hand hand[COLOR_SIZE] = { HAND_NONE, HAND_NONE };
         game::Position pos(pieces,hand,BLACK);
         while(true) {
-            if (key_dict.count(pos.hash_key()) == 0){
-                key_dict.insert({pos.hash_key(), 1});
+            const auto key = hash::hash_key(pos);
+            const auto new_pos = hash::from_hash(key);
+            ASSERT2(key == hash::hash_key(new_pos),{
+                Tee<<pos<<std::endl;
+                Tee<<new_pos<<std::endl;
+            });
+            if (key_dict.count(hash::hash_key(pos)) == 0){
+                key_dict.insert({hash::hash_key(pos), 1});
             }
             if (pos.is_draw()) {
-                Tee<<pos<<std::endl;
+                //Tee<<pos<<std::endl;
+                draw_num++;
                 break;
             }
             if (pos.is_lose()) {
                 //Tee<<pos<<std::endl;
+                mate_num++;
                 break;
             }
             if (pos.is_win()) {
-                Tee<<pos<<std::endl;
+                //Tee<<pos<<std::endl;
+                mate_num++;
                 break;
             }
             auto ml = movelist::MoveList();
             legal_moves(pos, ml);
             if (ml.len() == 0) {
                 //Tee<<pos<<std::endl;
+                mate_num++;
                 break;
             }
             auto mv = ml[my_rand(ml.len())];
@@ -379,5 +417,19 @@ void test_gen3() {
     }
 }
 
+}
+namespace game {
+bool Position::is_lose() const {
+    //相手のライオンがトライしていたら負け
+    const auto me = this->turn();
+    const auto opp = change_turn(me);
+    const auto lion_sq = this->king_sq(opp);
+    if ((opp == BLACK && sq_rank(lion_sq) == RANK_1) || (opp == WHITE && sq_rank(lion_sq) == RANK_4)){
+        if (!attack::is_attacked(*this, lion_sq, me)) {
+            return true;
+        }
+    } 
+    return !gen::has_legal(*this);
+}
 }
 #endif

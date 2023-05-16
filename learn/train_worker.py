@@ -5,7 +5,7 @@
 # パッケージのインポート
 from pathlib import Path
 from single_network import single_network
-from train_network4 import train_network
+from train_network import train_network
 from evaluate_network2 import *
 #from evaluate_best_player import *
 import multiprocessing as mp

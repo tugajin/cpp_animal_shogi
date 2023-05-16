@@ -5,12 +5,12 @@
 
 namespace attack {
 
-class Attacker {
+class Checker {
 public:
     int num;//どうぶつしょうぎの場合は絶対1
     Square from[1];
     Square dir[1];
-    Attacker(const game::Position &pos) {
+    Checker(const game::Position &pos) {
         this->num = 0;
         const auto turn = pos.turn();
         const auto opp = change_turn(turn);
@@ -38,6 +38,191 @@ public:
         SET_ATTACK(INC_RIGHTDOWN, LEFTUP_FLAG | color_flag);
 
 #undef SET_ATTACK
+    }
+};
+
+class Attacker {
+public:
+    int attacker_piece_num[COLOR_SIZE][SQUARE_SIZE][PIECE_END];//最大の利きの数は8
+    int attacker_num[COLOR_SIZE][SQUARE_SIZE];
+    Attacker(const game::Position &pos) {
+        REP_COLOR(c) {
+            REP(sq, SQUARE_SIZE) {
+                this->attacker_num[c][sq] = 0;
+                REP(p, PIECE_END) {
+                    this->attacker_piece_num[c][sq][p] = 0;
+                }
+            }
+        }
+        
+#define ADD_HIYOKO(turn, dir) do {\
+        REP(i, pos.piece_list_size(turn, HIYOKO)) {\
+            const auto from = pos.piece_list(turn, HIYOKO,i);\
+            const auto to = from + dir;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][HIYOKO];\
+                ++this->attacker_num[turn][index];\
+            }\
+        }\
+        }while(false)
+#define ADD_PIECE4(turn, piece, dir1,dir2,dir3,dir4) do {\
+        REP(i, pos.piece_list_size(turn, piece)) {\
+            const auto from = pos.piece_list(turn, piece,i);\
+            auto to = from + dir1;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][piece];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir2;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][piece];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir3;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][piece];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir4;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][piece];\
+                ++this->attacker_num[turn][index];\
+            }\
+        }\
+        }while(false)
+#define ADD_NIWATORI(turn, dir1,dir2,dir3,dir4,dir5,dir6) do {\
+        REP(i, pos.piece_list_size(turn, NIWATORI)) {\
+            const auto from = pos.piece_list(turn, NIWATORI,i);\
+            auto to = from + dir1;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][NIWATORI];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir2;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][NIWATORI];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir3;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][NIWATORI];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir4;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][NIWATORI];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir5;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][NIWATORI];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + dir6;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][NIWATORI];\
+                ++this->attacker_num[turn][index];\
+            }\
+        }\
+        }while(false)
+#define ADD_LION(turn) do {\
+        REP(i, pos.piece_list_size(turn, LION)) {\
+            const auto from = pos.piece_list(turn, LION,i);\
+            auto to = from + INC_LEFT;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + INC_RIGHT;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + INC_UP;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + INC_DOWN;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + INC_LEFTUP;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + INC_RIGHTUP;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + INC_LEFTDOWN;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+            to = from + INC_RIGHTDOWN;\
+            if (pos.square(to) != COLOR_WALL) {\
+                const auto index = sq_to_index(to);\
+                ++this->attacker_piece_num[turn][index][LION];\
+                ++this->attacker_num[turn][index];\
+            }\
+        }\
+        }while(false)
+        ADD_HIYOKO(BLACK, INC_UP);
+        ADD_HIYOKO(WHITE, INC_DOWN);
+        ADD_PIECE4(BLACK,ZOU,INC_LEFTUP, INC_LEFTDOWN, INC_RIGHTUP, INC_RIGHTDOWN);
+        ADD_PIECE4(WHITE,ZOU,INC_LEFTUP, INC_LEFTDOWN, INC_RIGHTUP, INC_RIGHTDOWN);
+        ADD_PIECE4(BLACK,KIRIN,INC_LEFT, INC_RIGHT, INC_UP, INC_DOWN);
+        ADD_PIECE4(WHITE,KIRIN,INC_LEFT, INC_RIGHT, INC_UP, INC_DOWN);
+        ADD_NIWATORI(BLACK, INC_LEFTUP, INC_UP, INC_RIGHTUP, INC_LEFT, INC_RIGHT, INC_DOWN);
+        ADD_NIWATORI(WHITE, INC_LEFTDOWN, INC_UP, INC_RIGHTDOWN, INC_LEFT, INC_RIGHT, INC_DOWN);
+        ADD_LION(BLACK);
+        ADD_LION(WHITE);
+
+#undef ADD_HIYOKO
+#undef ADD_PIECE4
+#undef ADD_NIWATORI
+#undef ADD_LION
+    }
+    std::string dump() const {
+        std::string str = "";
+        REP(i, SQUARE_SIZE) {
+            str += to_string(i) + ": bnum:" + to_string(this->attacker_num[BLACK][i]) + " bpiece: ";
+            REP_PIECE(p) {
+                REP(num, this->attacker_piece_num[BLACK][i][p]) {
+                    str += piece_str(p);
+                }
+            }
+            str += ": wnum:" + to_string(this->attacker_num[WHITE][i]) + " wpiece: ";
+            REP_PIECE(p) {
+                REP(num, this->attacker_piece_num[WHITE][i][p]) {
+                    str += piece_str(p);
+                }
+            }
+            str += "\n";
+        }
+        return str;
     }
 };
 
@@ -125,6 +310,21 @@ inline void test_attack() {
     }
 
 }
+inline void test_attack2() {
+    {
+        ColorPiece pieces[SQUARE_SIZE] = {
+            WK, WL, WZ,
+            CE, WH, CE,
+            CE, BH, CE,
+            BZ, BL, BK
+        };
+        Hand hand[COLOR_SIZE] = { HAND_NONE, HAND_NONE };
+        game::Position pos(pieces,hand,BLACK);
+        Attacker attack(pos);
+        Tee<<pos<<std::endl;
+        Tee<<attack.dump();
+    }
+}
 }
 namespace game{
 bool Position::is_win() const {
@@ -141,25 +341,6 @@ bool Position::is_win() const {
     } 
     return false;
 }
-bool Position::is_lose() const {
-    //相手のライオンがトライしていたら負け
-    const auto me = this->turn();
-    const auto opp = change_turn(me);
-    const auto lion_sq = this->king_sq(opp);
-    if ((opp == BLACK && sq_rank(lion_sq) == RANK_1) || (opp == WHITE && sq_rank(lion_sq) == RANK_4)){
-        if (!attack::is_attacked(*this, lion_sq, me)) {
-            return true;
-        }
-    } 
-    //盤上に自分のライオンがなかったら負け
-    const auto my_lion = (this->turn() == BLACK) ? BLACK_LION : WHITE_LION;
-    for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
-        const auto color_piece = this->square(*p);
-        if (color_piece == my_lion) {
-            return false;
-        }
-    }
-    return true;
-}
+
 }
 #endif

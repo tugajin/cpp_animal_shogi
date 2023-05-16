@@ -13,6 +13,8 @@
 #include "common.hpp"
 #include "game.hpp"
 #include "ubfm.hpp"
+#include "nn.hpp"
+#include "matesearch.hpp"
 
 namespace selfplay {
 
@@ -33,7 +35,7 @@ public:
         this->ofs.close();
         this->info.clear();
     }
-    void push_back(const Key hash, const NNScore sc) {
+    void push_back(const Key hash, const nn::NNScore sc) {
         info.push_back({{"p", hash},{"s", sc}});
     }
     void write_data() {
@@ -46,7 +48,7 @@ private:
 
 extern ReplayBuffer g_replay_buffer;
 
-void push_back(const Key hash, const NNScore score) {
+void push_back(const Key hash, const nn::NNScore score) {
     g_replay_buffer.push_back(hash, score);
 }
 
@@ -72,15 +74,23 @@ void execute_selfplay() {
 
     REP(i, INT_MAX) {
         game::Position pos;
+        pos = hash::hirate();
         g_replay_buffer.open();
         while(true) {
+            Tee<<pos<<std::endl;
             ubfm::g_searcher_global.clear_tree();
             if (pos.is_done()) {
                 g_replay_buffer.write_data();
                 g_replay_buffer.close();
                 break;
             }
-            const auto best_move = execute_descent(pos);
+            auto best_move = MOVE_NONE;
+            if (!attack::in_checked(pos)) {
+                best_move = mate::mate_search(pos,5);
+            } 
+            if(best_move == MOVE_NONE) {
+                best_move = execute_descent(pos);
+            }
             pos = pos.next(best_move);
         }
         if (i && i % 10 == 0) {
@@ -90,10 +100,10 @@ void execute_selfplay() {
         Tee<<".";
     }
 }
-void test_nn() {
+void test() {
 }
 void test_selfplay() {
-    std::thread th_a(test_nn);
+    std::thread th_a(test);
     th_a.join();
 }
 

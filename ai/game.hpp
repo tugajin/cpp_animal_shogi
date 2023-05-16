@@ -7,6 +7,12 @@
 #include "common.hpp"
 #include "util.hpp"
 #include "movelist.hpp"
+namespace game {
+class Position;
+}
+namespace hash {
+Key hash_key(const game::Position &pos);
+}
 
 namespace game {
 
@@ -14,14 +20,19 @@ class Position {
 public:
     Position() {}
     Position(const ColorPiece pieces[], const Hand hand[], const Color turn);
-    Position(const Key h);
     void init_pos();
     bool is_lose() const ;
-
     bool is_win() const;
     bool is_draw() const {
-        if (this->ply_ >= 1024) {
+        if (this->ply_ >= 100) {
             return true;
+        }
+        const auto curr_key = this->history_[this->ply_];
+        for (auto ply = this->ply_ - 4; ply >= 0; ply -= 2) {
+            const auto prev_key = this->history_[ply];
+            if (curr_key == prev_key) {
+                return true;
+            }
         }
         return false;
     }
@@ -52,7 +63,6 @@ public:
         return this->hand_[c];
     }
     bool is_ok() const;
-    Key hash_key() const;
     std::string str() const;
     Square king_sq (const Color c) const {
         return this->piece_list_[c][LION][0];
@@ -61,10 +71,6 @@ public:
         os << pos.str();
 		return os;
 	}
-    Feature feature() const {
-        Feature feat(FEAT_SIZE, std::vector<int>(FILE_SIZE, 0));
-        return feat;
-    }
     Position next(const Move action) const;
     void dump() const;
 private:
@@ -75,7 +81,7 @@ private:
     int piece_list_size_[COLOR_SIZE][PIECE_END];//piece_listのどこまで使ったか？
     Hand hand_[COLOR_SIZE];
 
-    Key history_[1024];
+    Key history_[128];
     int ply_;
     Color turn_;
     void quiet_move_piece(const Square from, const Square to, ColorPiece color_piece);
@@ -94,7 +100,7 @@ Position::Position(const ColorPiece pieces[], const Hand hand[], const Color tur
             this->piece_list_size_[col][pc] = 0;
         }
     }
-    REP(i, 1024) {
+    REP(i, 128) {
         this->history_[i] = 0;
     }
     this->ply_ = 0;
@@ -108,6 +114,7 @@ Position::Position(const ColorPiece pieces[], const Hand hand[], const Color tur
     this->hand_[BLACK] = hand[BLACK];
     this->hand_[WHITE] = hand[WHITE];
     this->turn_ = turn;
+    this->history_[this->ply_] = hash::hash_key(*this);
 }
 
 void Position::quiet_move_piece(const Square from, const Square to, const ColorPiece color_piece) {
@@ -148,73 +155,8 @@ void Position::remove_piece(const Square sq, const ColorPiece color_piece) {
     this->piece_list_index_[sq] = -1;
 }
 
-Position::Position(const Key key) {
-    ColorPiece pieces[SQUARE_SIZE] = {};
-    Hand hand[COLOR_SIZE];
-    Color turn = BLACK;
-    auto k = key;
-    if (k & 0x1) {
-        turn = WHITE;
-    }
-    auto num = (k >> 1) & 0x3;
-    k >>= 1;
-    REP(i, num) {
-        hand[WHITE] = inc_hand(hand[WHITE],ZOU);
-    }
-    num = (k >> 2) & 0x3;
-    k >>= 2;
-    REP(i, num) {
-        hand[WHITE] = inc_hand(hand[WHITE],KIRIN);
-    }
-    num = (k >>2 ) & 0x3;
-    k >>= 2;
-    REP(i, num) {
-        hand[WHITE] = inc_hand(hand[WHITE],HIYOKO);
-    }
-    num = (k >>2 ) & 0x3;
-    k >>= 2;
-    REP(i, num) {
-        hand[BLACK] = inc_hand(hand[BLACK],ZOU);
-    }
-    num = (k >> 2) & 0x3;
-    k >>= 2;
-    REP(i, num) {
-        hand[BLACK] = inc_hand(hand[BLACK],KIRIN);
-    }
-    num = (k >>2 ) & 0x3;
-    k >>= 2;
-    REP(i, num) {
-        hand[BLACK] = inc_hand(hand[BLACK],HIYOKO);
-    }
-    auto p = SQUARE_INDEX + SQUARE_SIZE;
-    auto i = SQUARE_SIZE;
-    for (auto p = SQUARE_INDEX + SQUARE_SIZE; p != SQUARE_INDEX; --p) {
-        const auto color_piece = static_cast<ColorPiece>((k >> 4) & 0xF);
-        k >>= 4;
-        pieces[--i] = color_piece;
-    }
-    Position(pieces, hand, turn);
-}
-
-Key Position::hash_key() const {
-    Key key = this->turn() == BLACK ? 0ull : 2ull;
-    for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
-        const auto color_piece = this->square_[*p];
-        key += (key << 4) + color_piece_no(color_piece);
-    }
-    key += (key << 2) + num_piece(this->hand_[BLACK], HIYOKO);
-    key += (key << 2) + num_piece(this->hand_[BLACK], KIRIN);
-    key += (key << 2) + num_piece(this->hand_[BLACK], ZOU);
-    
-    key += (key << 2) + num_piece(this->hand_[WHITE], HIYOKO);
-    key += (key << 2) + num_piece(this->hand_[WHITE], KIRIN);
-    key += (key << 2) + num_piece(this->hand_[WHITE], ZOU);
-
-    return key;
-}
-
 std::string Position::str() const {
-    std::string ret = "手番:" + color_str(this->turn()) + " hash:" + to_string(this->hash_key()) + " ply:" + to_string(this->ply_) + "\n";
+    std::string ret = "手番:" + color_str(this->turn()) + " hash:" + to_string(this->history_[this->ply_]) + " ply:" + to_string(this->ply_) + "\n";
     ret += "後手:" + hand_str(this->hand_[WHITE]) + "\n";
     for(auto *p = SQUARE_INDEX; *p != SQ_WALL; ++p) {
         const auto color_piece = this->square_[*p];
@@ -241,7 +183,7 @@ bool Position::is_ok() const {
 #endif
         return false;
     }
-    if (this->ply_ < 0 || this->ply_ > 1024) {
+    if (this->ply_ < 0 || this->ply_ > 128) {
 #ifdef DEBUG
                 Tee<<"error history\n";
 #endif
@@ -377,6 +319,7 @@ Position Position::next(const Move action) const {
     }
     ++next_pos.ply_;
     next_pos.turn_ = change_turn(turn);
+    next_pos.history_[next_pos.ply_] = hash::hash_key(next_pos);
     ASSERT2(next_pos.is_ok(),{
         //Tee<<"prev\n";
         //Tee<<*this<<std::endl;
@@ -419,10 +362,6 @@ void Position::dump() const {
     }
     Tee<<"black_hand:"<<static_cast<int>(this->hand_[BLACK])<<std::endl;
     Tee<<"white_hand:"<<static_cast<int>(this->hand_[WHITE])<<std::endl;
-}
-
-Position from_hash(const Key h) {
-    return Position(h);
 }
 
 void test_common() {
@@ -592,8 +531,6 @@ void test_common() {
     ASSERT(color_piece(LION, WHITE) == WHITE_LION);
     ASSERT(color_piece(NIWATORI, WHITE) == WHITE_NIWATORI);
 
-}
-void test_nn() {
 }
 }
 #endif

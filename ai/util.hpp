@@ -60,10 +60,15 @@ typedef std::uint16_t uint16;
 typedef std::uint32_t uint32;
 typedef std::uint64_t uint64;
 
+#if DEBUG
 
 #define ASSERT(a) { if (!(a)) { Tee<<"file:"<<__FILE__<<" line:"<<__LINE__<<std::endl; std::exit(EXIT_FAILURE); }  }
 #define ASSERT2(a,f) { if (!(a)) { Tee<<"file:"<<__FILE__<<" line:"<<__LINE__<<std::endl; f; std::exit(EXIT_FAILURE); }  }
 
+#else
+#define ASSERT(a) {}
+#define ASSERT2(a,f) {}
+#endif
 std::string timestamp();
 
 class TeeStream {

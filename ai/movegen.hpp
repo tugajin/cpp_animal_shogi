@@ -1,4 +1,4 @@
-#ifndef __MOVEGEN__HPP__
+#ifndef __MOVEGEN_HPP__
 #define __MOVEGEN_HPP__
 
 #include "game.hpp"
@@ -8,7 +8,7 @@
 
 namespace gen {
 
-void pos_moves(const game::Position &pos, movelist::MoveList &ml) {
+template<bool is_exists = false> bool pos_moves(const game::Position &pos, movelist::MoveList &ml) {
     const auto turn = pos.turn();
     const auto opp = change_turn(turn);
     const auto move_flag = (turn == BLACK) ? (BLACK_FLAG | COLOR_WALL_FLAG) : (WHITE_FLAG | COLOR_WALL_FLAG);
@@ -22,8 +22,10 @@ void pos_moves(const game::Position &pos, movelist::MoveList &ml) {
                 if (attack::can_move(pos.square(to), move_flag)) {
                     const auto prom = sq_rank(to) == RANK_1;
                     if (prom) {
+                        if (is_exists) { return true; }
                         ml.add(move(from, to, prom));
                     }
+                    if (is_exists) { return true; }
                     ml.add(move(from, to));
                 }
             } else {
@@ -31,8 +33,10 @@ void pos_moves(const game::Position &pos, movelist::MoveList &ml) {
                 if (attack::can_move(pos.square(to), move_flag)) {
                     const auto prom = sq_rank(to) == RANK_4;
                     if (prom) {
+                        if (is_exists) { return true; }
                         ml.add(move(from, to, prom));
                     }
+                    if (is_exists) { return true; }
                     ml.add(move(from, to));
                 }
             }
@@ -41,6 +45,7 @@ void pos_moves(const game::Position &pos, movelist::MoveList &ml) {
 #define ADD_MOVE(dir) do {\
             const auto to = from + (dir);\
             if (attack::can_move(pos.square(to), move_flag)) {\
+                if (is_exists) { return true; }\
                 ml.add(move(from, to));\
             }\
 }while(false)
@@ -87,6 +92,7 @@ void pos_moves(const game::Position &pos, movelist::MoveList &ml) {
 #define ADD_MOVE_LION(dir) do {\
             const auto to = from + (dir);\
             if (attack::can_move(pos.square(to), move_flag) && !attack::is_attacked(pos, to, opp)) {\
+                if (is_exists) { return true; }\
                 ml.add(move(from, to));\
             }\
 }while(false)
@@ -107,6 +113,7 @@ void pos_moves(const game::Position &pos, movelist::MoveList &ml) {
     }
 #undef ADD_MOVE
 #undef ADD_MOVE_LION
+    return false;
 }
 
 }
