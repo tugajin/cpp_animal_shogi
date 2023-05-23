@@ -48,7 +48,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.00001)
     dataset = HistoryDataset(path_list)
     dataset_len = len(dataset)
-    dataloader = DataLoader(dataset=dataset, batch_size=RN_BATCH_SIZE, shuffle=True) 
+    dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True) 
     start = time.time()
     for i in range(epoch_num):
         print(f"epoch:{i}")
@@ -67,7 +67,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
             sum_loss += loss.item()
             sum_num += 1
             if sum_num % 1000 == 0:
-                n = RN_BATCH_SIZE * sum_num
+                n = batch_size * sum_num
                 now = time.time()
                 print(f"{n}/{dataset_len} ({100 * (n/dataset_len):.3f}%) loss:{loss.item()} sec:{int(now-start)}")
 
