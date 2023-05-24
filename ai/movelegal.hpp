@@ -8,6 +8,7 @@
 #include "movedrop.hpp"
 #include "moveevasion.hpp"
 #include "movecheck.hpp"
+#include "movecapture.hpp"
 #include "matesearch.hpp"
 #include "hash.hpp"
 
@@ -85,6 +86,12 @@ template<bool is_exists = false> bool legal_moves(const game::Position &pos, mov
 bool has_legal(const game::Position &pos) {
     movelist::MoveList dummy;
     return legal_moves<true>(pos, dummy);
+}
+
+int num_legal(const game::Position &pos) {
+    movelist::MoveList dummy;
+    legal_moves(pos, dummy);
+    return dummy.len();
 }
 
 void test_gen() {
@@ -354,7 +361,7 @@ void test_gen2() {
     }
 }
 void test_gen3() {
-    
+#if DEBUG
     std::unordered_map<Key, int> key_dict;
     uint64 mate_num = 0;
     uint64 draw_num = 0;
@@ -415,6 +422,7 @@ void test_gen3() {
             pos = pos.next(mv);
         }
     }
+#endif
 }
 
 }

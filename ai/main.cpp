@@ -9,6 +9,7 @@
 #include "matesearch.hpp"
 #include "hash.hpp"
 #include "nn.hpp"
+#include "countreward.hpp"
 
 TeeStream Tee;
 
@@ -27,18 +28,9 @@ ReplayBuffer g_replay_buffer;
 }
 
 int main(int /*argc*/, char **/*argv*/){
+    check_mode();
     init_table();
-    //hash::test_hash();
-    //mate::test_mate();
-    //movelist::test_move_list();
-    //game::test_common();
-    //attack::test_attack2();
-    //gen::test_gen3();
-    //gen::test_gen3();
-    //search::test_search();
-    //selfplay::test_selfplay();
-    //ubfm::test_ubfm();
-    selfplay::execute_selfplay();
-    //nn::test_nn();
+    search::test_search();
+    //selfplay::execute_selfplay();
     return 0;
 }

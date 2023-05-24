@@ -24,7 +24,7 @@ public:
     bool is_lose() const ;
     bool is_win() const;
     bool is_draw() const {
-        if (this->ply_ >= 100) {
+        if (this->ply_ >= 400) {
             return true;
         }
         const auto curr_key = this->history_[this->ply_];
@@ -33,6 +33,12 @@ public:
             if (curr_key == prev_key) {
                 return true;
             }
+        }
+        return false;
+    }
+    bool is_draw_short() const {
+        if (this->ply_ >= 400) {
+            return true;
         }
         return false;
     }
@@ -73,6 +79,9 @@ public:
 	}
     Position next(const Move action) const;
     void dump() const;
+    Key history() const {
+        return this->history_[this->ply_];
+    }
 private:
     ColorPiece square_[SQ_END];//どんな駒が存在しているか？
     int piece_list_index_[SQ_END];//piece_listの何番目か
@@ -81,7 +90,7 @@ private:
     int piece_list_size_[COLOR_SIZE][PIECE_END];//piece_listのどこまで使ったか？
     Hand hand_[COLOR_SIZE];
 
-    Key history_[128];
+    Key history_[1024];
     int ply_;
     Color turn_;
     void quiet_move_piece(const Square from, const Square to, ColorPiece color_piece);
@@ -100,7 +109,7 @@ Position::Position(const ColorPiece pieces[], const Hand hand[], const Color tur
             this->piece_list_size_[col][pc] = 0;
         }
     }
-    REP(i, 128) {
+    REP(i, 1024) {
         this->history_[i] = 0;
     }
     this->ply_ = 0;
@@ -178,13 +187,13 @@ std::string Position::str() const {
 
 bool Position::is_ok() const {
     if (this->turn() != BLACK && this->turn() != WHITE) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error turn\n";
 #endif
         return false;
     }
-    if (this->ply_ < 0 || this->ply_ > 128) {
-#ifdef DEBUG
+    if (this->ply_ < 0 || this->ply_ > 1024) {
+#if DEBUG
                 Tee<<"error history\n";
 #endif
         return false;
@@ -198,13 +207,13 @@ bool Position::is_ok() const {
             const auto color = piece_color(color_piece);
             const auto index = this->piece_list_index_[sq];
             if (index < 0 || index > 1) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error1\n";
 #endif
                 return false;
             }
             if (this->piece_list_[color][piece][index] == SQ_WALL) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error1.5\n";
                 Tee<<this->piece_list_[color][piece][index]<<std::endl;
                 Tee<<"color:"<<color<<std::endl;
@@ -215,7 +224,7 @@ bool Position::is_ok() const {
 #endif              
             }
             if (this->piece_list_[color][piece][index] != sq) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error2\n";
                 Tee<<"sq:"<<sq<<std::endl;
                 Tee<<this->piece_list_[color][piece][index]<<std::endl;
@@ -228,7 +237,7 @@ bool Position::is_ok() const {
         } else {
             const auto index = this->piece_list_index_[sq];
             if (index != -1) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error3\n";
                 Tee<<sq<<std::endl;
                 Tee<<index<<std::endl;
@@ -243,7 +252,7 @@ bool Position::is_ok() const {
             if (this->piece_list_size_[col][piece] != 0
             && this->piece_list_size_[col][piece] != 1
             && this->piece_list_size_[col][piece] != 2) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error size\n";
                 Tee<<this->piece_list_size_[col][piece]<<std::endl;
                 Tee<<col<<std::endl;
@@ -254,13 +263,13 @@ bool Position::is_ok() const {
             REP(index, this->piece_list_size_[col][piece]) {
                 const auto piece_list_sq = this->piece_list_[col][piece][index];
                 if (color_piece(piece,col) != this->square_[piece_list_sq]) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error4\n";
 #endif
                     return false;
                 }
                 if (this->piece_list_index_[piece_list_sq] != index) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error5\n";
 #endif
                     return false;
@@ -269,13 +278,13 @@ bool Position::is_ok() const {
         }
     }
     if (!hand_is_ok(this->hand_[BLACK])) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error black hand\n";
 #endif
         return false;
     } 
     if (!hand_is_ok(this->hand_[WHITE])) {
-#ifdef DEBUG
+#if DEBUG
                 Tee<<"error white hand\n";
 #endif
         return false;
@@ -365,6 +374,7 @@ void Position::dump() const {
 }
 
 void test_common() {
+#if DEBUG
     ASSERT(change_turn(BLACK) == WHITE);
     ASSERT(change_turn(WHITE) == BLACK);
 
@@ -530,7 +540,7 @@ void test_common() {
     ASSERT(color_piece(ZOU, WHITE) == WHITE_ZOU);
     ASSERT(color_piece(LION, WHITE) == WHITE_LION);
     ASSERT(color_piece(NIWATORI, WHITE) == WHITE_NIWATORI);
-
+#endif
 }
 }
 #endif

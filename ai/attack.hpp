@@ -11,6 +11,7 @@ public:
     Square from[1];
     Square dir[1];
     Checker(const game::Position &pos) {
+        this->from[0] = this->dir[0] = SQ_WALL;
         this->num = 0;
         const auto turn = pos.turn();
         const auto opp = change_turn(turn);

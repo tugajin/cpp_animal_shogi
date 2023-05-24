@@ -15,9 +15,10 @@
 #include "selfplay.hpp"
 #include "thread.hpp"
 #include "nn.hpp"
+#include "countreward.hpp"
 
 namespace selfplay {
-void push_back(const Key hash, const nn::NNScore score);
+void push_back(const Key hash, const nn::NNScore score, const nn::NNScore delta);
 }
 
 namespace ubfm {
@@ -61,6 +62,7 @@ public:
              best_move(MOVE_NONE),
              state(NodeUnknown),
              w(0.0),
+             init_w(0.0),
              n(0),
              child_len(-1),
              ply(-1){}
@@ -68,7 +70,7 @@ public:
    Node & operator = ( const Node & ) = delete ;
    Node & operator = ( const Node && n) = delete;
     void init() {
-        this->w = 0.0;
+        this->w = this->init_w = 0.0;
         this->n = 0;
         this->parent_move = this->best_move = MOVE_NONE;
         this->child_len = -1;
@@ -97,6 +99,7 @@ public:
         std::string str = "---------------------------\n";
         if (is_root) { str += pos.str(); }
         str += padding + "w:" + to_string(w) + "\n";
+        str += padding + "init_w:" + to_string(init_w) + "\n";
         str += padding + "n:" + to_string(n) + "\n";
         str += padding + "child_len:" + to_string(child_len) + "\n";
         str += padding + "ply:" + to_string(ply) + "\n";
@@ -126,6 +129,7 @@ public:
     Move best_move;
     NodeState state;
     nn::NNScore w;
+    nn::NNScore init_w;
     uint32 n;
     int child_len;
     int ply;
@@ -158,7 +162,7 @@ private:
     void evaluate_descent(Node *node);
     void predict(Node *node);
     void expand(Node *node);
-    Node *next_child(const Node *node) const;
+    template<bool is_descent> Node *next_child(const Node *node) const;
     Node *next_child2(const Node *node) const;
     void update_node(Node *node);
     void add_node(const game::Position &pos,const Move parent_move, int ply);
@@ -209,7 +213,8 @@ public:
     void join();
     void choice_best_move();
     void choice_best_move_e_greedy();
-    void add_replay_buffer(const Node * node) const ;
+    void choice_best_move_count(const reward::CountReward &cw);
+    void add_replay_buffer(const Node * node, reward::CountReward &cw) const ;
 
     int GPU_NUM = 1;
     int THREAD_NUM = 1;
@@ -271,9 +276,9 @@ void UBFMSearcherGlobal::join() {
 }
 
 void UBFMSearcherGlobal::choice_best_move() {
-    std::vector<int> scores;
+    std::vector<double> scores;
     REP(i, this->root_node.child_len) {
-        scores.push_back(1);
+        scores.push_back(0.0);
     }
     REP(i, this->root_node.child_len) {
         auto child = this->root_node.child(i);
@@ -285,12 +290,12 @@ void UBFMSearcherGlobal::choice_best_move() {
                 scores[i] = 1;
                 break;
             } else if (child->is_draw()) {
-                scores[i] = child->n + 100;
+                scores[i] = (child->n) + 1.0;
             } else if (child->is_win()) {
-                scores[i] = 1;
+                scores[i] = 0.0;
             }
         } else {
-            scores[i] = child->n - child->w + 100;
+            scores[i] = child->n + 1.0 - child->w;
         }
     }
     auto index = -1;
@@ -301,9 +306,9 @@ void UBFMSearcherGlobal::choice_best_move() {
 }
 
 void UBFMSearcherGlobal::choice_best_move_e_greedy() {
-    std::vector<nn::NNScore> scores;
+    std::vector<double> scores;
     REP(i, this->root_node.child_len) {
-        scores.push_back(nn::NNScore(0.0));
+        scores.push_back(0.0);
     }
     auto find_resolved_flag = false;
     REP(i, this->root_node.child_len) {
@@ -311,27 +316,65 @@ void UBFMSearcherGlobal::choice_best_move_e_greedy() {
         if (child->is_resolved()) {
             if (child->is_lose()) {
                 REP(i, this->root_node.child_len) {
-                    scores[i] = nn::NNScore(0.0);
+                    scores[i] = 0.0;
                 }
-                scores[i] = score_win(0);
+                scores[i] = 1.0;
                 find_resolved_flag = true;
                 break;
             } else if (child->is_draw()) {
-                scores[i] = nn::NNScore(0.0) + (rand_double() / 1000);
+                scores[i] = 0.0 + (rand_double() / 1000);
             } else if (child->is_win()) {
-                scores[i] = score_lose(0) + (rand_double() / 1000);
+                scores[i] = static_cast<double>(score_lose(0)) + (rand_double() / 1000);
             }
         } else {
-            scores[i] = -child->w;
+            scores[i] = child->n + 1.0 - child->w;
         }
     }
     auto index = -1;
     if (!find_resolved_flag && rand_double() < this->TEMPERATURE) {
+        Tee<<"random_move\n";
         index = my_rand(this->root_node.child_len);
     } else {
+        Tee<<"best_move\n";
         auto iter = std::max_element(scores.begin(), scores.end());
         index = std::distance(scores.begin(), iter);
     }
+    auto child = this->root_node.child(index);
+    this->root_node.best_move = child->parent_move;
+}
+
+void UBFMSearcherGlobal::choice_best_move_count(const reward::CountReward &cw) {
+    std::vector<double> scores;
+    std::vector<uint64> num;
+    REP(i, this->root_node.child_len) {
+        auto child = this->root_node.child(i);
+        const auto r = 1 + cw.get(child->pos.history());
+        scores.push_back((1 / std::sqrt(r)));
+        num.push_back(r);
+    }
+    REP(i, this->root_node.child_len) {
+        auto child = this->root_node.child(i);
+        const auto reward = scores[i] * 1;
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node.child_len) {
+                    scores[i] = 0;
+                }
+                scores[i] = 1;
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = 0;
+            } else if (child->is_win()) {
+                scores[i] = -1.0 ;
+            }
+        } else {
+            scores[i] = /*child->n + 1.0 */- child->w + reward;
+        }
+        Tee<<move_str(child->parent_move)<<" score:"<<scores[i] <<" n:"<<child->n << " w:" << -child->w << " init_w:" << -child->init_w <<" reward:"<<reward << " org:" << num[i] <<std::endl;
+    }
+    auto index = -1;
+    auto iter = std::max_element(scores.begin(), scores.end());
+    index = std::distance(scores.begin(), iter);
     auto child = this->root_node.child(index);
     this->root_node.best_move = child->parent_move;
 }
@@ -424,6 +467,7 @@ void UBFMSearcherLocal::evaluate(Node *node) {
     ASSERT(std::fabs(node->w) <= 1);
     node->lock_node.lock();
     if (node->pos.is_draw()) {
+        node->w = nn::NNScore(0.0);
         node->state = NodeState::NodeDraw;
         node->lock_node.unlock();
         return;
@@ -442,7 +486,7 @@ void UBFMSearcherLocal::evaluate(Node *node) {
         this->predict(node);
         node->lock_node.unlock();
     } else {
-        auto next_node = this->next_child(node);
+        auto next_node = this->next_child<false>(node);
         node->lock_node.unlock();
         this->evaluate(next_node);
     }
@@ -456,10 +500,12 @@ void UBFMSearcherLocal::evaluate_descent(Node *node) {
     //ASSERT(!node->is_resolved());
     ASSERT(std::fabs(node->w) <= 1);
     if (node->pos.is_draw()) {
+        node->w = nn::NNScore(0.0);
         node->state = NodeState::NodeDraw;
         return;
     } 
     if (node->pos.is_lose()) {
+        node->w = score_lose(node->ply);
         node->state = NodeState::NodeLose;
         return;
     }
@@ -468,12 +514,7 @@ void UBFMSearcherLocal::evaluate_descent(Node *node) {
         this->predict(node);
         this->update_node(node);
     } 
-    /*if (!node->is_resolved()) {
-        auto next_node = this->next_child(node);
-        this->evaluate_descent(next_node);
-        this->update_node(node);
-    }*/
-    auto next_node = this->next_child(node);
+    auto next_node = this->next_child<true>(node);
     if (next_node != nullptr) {
         this->evaluate_descent(next_node);
         this->update_node(node);
@@ -550,11 +591,11 @@ void UBFMSearcherLocal::predict(Node *node) {
             Tee<<child->ply<<std::endl;
         });
         child->n += 1;
-        child->w = score;
+        child->w = child->init_w = score;
         child->state = state;
     }
 }
-Node *UBFMSearcherLocal::next_child(const Node *node) const {
+template<bool is_descent> Node *UBFMSearcherLocal::next_child(const Node *node) const {
     ASSERT(node->child_len >= 0);
     Node *best_child = nullptr;
     nn::NNScore best_score = nn::NNScore(-1);
@@ -564,6 +605,9 @@ Node *UBFMSearcherLocal::next_child(const Node *node) const {
         ASSERT(std::fabs(child->w)<=1); 
         if (child->is_resolved()) { continue; }
         auto score = -child->w;
+        if (is_descent) {
+            score += static_cast<nn::NNScore>(rand_gaussian(0.0,0.2));
+        }
         if (score > best_score) {
             best_score = score;
             min_num = child->n;
@@ -580,27 +624,7 @@ Node *UBFMSearcherLocal::next_child(const Node *node) const {
     }
     return best_child;
 }
-Node *UBFMSearcherLocal::next_child2(const Node *node) const {
-    Node *best_child = nullptr;
-    nn::NNScore best_score = nn::NNScore(-1);
-    auto max_num = 0u;
-    REP(i, node->child_len) {
-        auto child = node->child(i);
-        if (child->is_resolved()) { continue; }
-        if (-child->w > best_score) {
-            best_score = -child->w;
-            max_num = child->n;
-            best_child = child;
-        } else if (-child->w == best_score) {
-            if (child->n > max_num ) {
-                max_num = child->n;
-                best_child = child;
-            }
-        }
-    }
-    ASSERT(best_child != nullptr);
-    return best_child;
-}
+
 void UBFMSearcherLocal::update_node(Node *node) {
 
     Node *best_child = nullptr;
@@ -677,14 +701,16 @@ void UBFMSearcherLocal::update_node(Node *node) {
 }
 
 
-void UBFMSearcherGlobal::add_replay_buffer(const Node * node) const {
-    selfplay::push_back(hash::hash_key(node->pos), node->w);
+void UBFMSearcherGlobal::add_replay_buffer(const Node * node, reward::CountReward &cw) const {
+    const auto key = hash::hash_key(node->pos);
+    selfplay::push_back(key, node->w, std::fabs(node->w - node->init_w));
+    //cw.update(key);
     REP(i, node->child_len) {
         auto child = node->child(i);
         if (child->is_terminal() && !child->is_resolved()) {
             continue;
         }
-        this->add_replay_buffer(child);
+        this->add_replay_buffer(child, cw);
     }
 }
 void test_ubfm() {

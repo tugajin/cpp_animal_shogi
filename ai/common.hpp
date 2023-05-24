@@ -403,6 +403,16 @@ inline ColorPiece piece_no_color_piece(const int index) {
     return static_cast<ColorPiece>(g_piece_no_color_piece[index]);
 }
 
+void check_mode() {
+#if DEBUG
+    Tee<<"debug mode\n";
+#elif NDEBUG
+    Tee<<"release mode\n";
+#else
+    Tee<<"unknown mode\n";
+#endif
+}
+
 void init_table() {
 
     REP(i, COLOR_PIECE_END) {
@@ -453,15 +463,6 @@ void init_table() {
     g_piece_color_piece[WHITE][LION] = WHITE_LION;
     g_piece_color_piece[WHITE][NIWATORI] = WHITE_NIWATORI;
 
-    // for(auto *fp = SQUARE_INDEX; *fp != SQ_WALL; ++fp) {
-    //     const auto from = *fp;
-    //     for(auto *tp = SQUARE_INDEX; *tp != SQ_WALL; ++tp) {
-    //         const auto to = *tp;
-    //         if (from == to)
-    //             continue;
-    //         Tee<<from<<":"<<to<<":"<<from-to<<":"<<to-from<<std::endl;
-    //     }
-    // }
     REP(i, DELTA_NB) {
         g_delta_inc_all[i] = INC_NONE;
         g_delta_mask[i] = COLOR_EMPTY;

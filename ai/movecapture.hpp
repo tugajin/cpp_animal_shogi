@@ -1,5 +1,5 @@
-#ifndef __MOVEGEN_HPP__
-#define __MOVEGEN_HPP__
+#ifndef __MOVECAPTURE_HPP__
+#define __MOVECAPTURE_HPP__
 
 #include "game.hpp"
 #include "movelist.hpp"
@@ -7,10 +7,14 @@
 
 namespace gen {
 
-template<bool is_exists = false> bool pos_moves(const game::Position &pos, movelist::MoveList &ml) {
+inline bool is_capture(ColorPiece pc, ColorPiece flag) {
+    return (pc & flag) != 0;
+}
+
+template<bool is_exists = false> bool cap_moves(const game::Position &pos, movelist::MoveList &ml) {
     const auto turn = pos.turn();
     const auto opp = change_turn(turn);
-    const auto move_flag = (turn == BLACK) ? (BLACK_FLAG | COLOR_WALL_FLAG) : (WHITE_FLAG | COLOR_WALL_FLAG);
+    const auto move_flag = (turn == BLACK) ? WHITE_FLAG  : BLACK_FLAG;
     // HIYOKO
     {
         const auto size = pos.piece_list_size(turn, HIYOKO);
@@ -18,7 +22,7 @@ template<bool is_exists = false> bool pos_moves(const game::Position &pos, movel
             const auto from = pos.piece_list(turn, HIYOKO, index);
             if (turn == BLACK) {
                 const auto to = from + INC_UP;
-                if (attack::can_move(pos.square(to), move_flag)) {
+                if (is_capture(pos.square(to), move_flag)) {
                     const auto prom = sq_rank(to) == RANK_1;
                     if (prom) {
                         if (is_exists) { return true; }
@@ -29,7 +33,7 @@ template<bool is_exists = false> bool pos_moves(const game::Position &pos, movel
                 }
             } else {
                 const auto to = from + INC_DOWN;
-                if (attack::can_move(pos.square(to), move_flag)) {
+                if (is_capture(pos.square(to), move_flag)) {
                     const auto prom = sq_rank(to) == RANK_4;
                     if (prom) {
                         if (is_exists) { return true; }
@@ -43,7 +47,7 @@ template<bool is_exists = false> bool pos_moves(const game::Position &pos, movel
     }
 #define ADD_MOVE(dir) do {\
             const auto to = from + (dir);\
-            if (attack::can_move(pos.square(to), move_flag)) {\
+            if (is_capture(pos.square(to), move_flag)) {\
                 if (is_exists) { return true; }\
                 ml.add(move(from, to));\
             }\
@@ -90,7 +94,7 @@ template<bool is_exists = false> bool pos_moves(const game::Position &pos, movel
     }
 #define ADD_MOVE_LION(dir) do {\
             const auto to = from + (dir);\
-            if (attack::can_move(pos.square(to), move_flag) && !attack::is_attacked(pos, to, opp)) {\
+            if (is_capture(pos.square(to), move_flag) && !attack::is_attacked(pos, to, opp)) {\
                 if (is_exists) { return true; }\
                 ml.add(move(from, to));\
             }\

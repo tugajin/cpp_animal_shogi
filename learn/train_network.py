@@ -6,6 +6,7 @@
 from single_network import *
 from pathlib import Path
 from history_dataset import *
+from priority_dataset import *
 from torch.utils.data import DataLoader
 import numpy as np
 import pickle
@@ -46,7 +47,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
     
     model.train()
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.00001)
-    dataset = HistoryDataset(path_list)
+    dataset = PriorityDataset(path_list)
     dataset_len = len(dataset)
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True) 
     start = time.time()

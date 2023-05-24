@@ -5,14 +5,16 @@ project(cpp_animal_shogi CXX)
 
 set(CMAKE_PREFIX_PATH "~/libtorch")
 set(CMAKE_BUILD_TYPE Debug)
+#set(CMAKE_BUILD_TYPE Release)
 
 # Find Package
 find_package(Torch REQUIRED)
 
+set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O0 -pg -DDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -s -DNDEBUG -march=native")
 
 # Create Executable File
 add_executable(${PROJECT_NAME} main.cpp)
 target_compile_options(${PROJECT_NAME} PUBLIC -Wall -Wextra)
 target_link_libraries(${PROJECT_NAME} ${TORCH_LIBRARIES})
-target_compile_definitions(${PROJECT_NAME}  PRIVATE DEBUG=1)
-set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 17)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)

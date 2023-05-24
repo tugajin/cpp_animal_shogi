@@ -129,6 +129,13 @@ double rand_double() {
 	return distr(eng);
 }
 
+double rand_gaussian(const double mean, const double variance) {
+	std::random_device seed_gen;
+    std::default_random_engine engine(seed_gen());
+    std::normal_distribution<> dist(mean, variance);
+	return dist(engine);
+}
+
 int my_rand(int i) {
 	return int(rand_int_64() % i);
 }

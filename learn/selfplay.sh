@@ -1,2 +1,2 @@
-cp ../ai/build/cpp_tic_tac_toe ./
-./cpp_tic_tac_toe
+cp ../ai/build/cpp_animal_shogi ./
+./cpp_animal_shogi

@@ -6,7 +6,7 @@
 from pathlib import Path
 from single_network import single_network
 from train_network import train_network
-from evaluate_network2 import *
+from evaluate_network import *
 #from evaluate_best_player import *
 import multiprocessing as mp
 import sys
@@ -18,12 +18,13 @@ def load_selfplay_data(select_num = 10):
     path_list = list(Path('./data').glob('*.json'))
     if len(path_list) < select_num:
         return None
-    return random.sample(path_list, select_num)
+    #return random.sample(path_list, select_num)
+    return path_list
 
 def clean_selfplay_data(select_num = 10):
     path_list = sorted(list(Path('./data').glob('*.json')))
-    if len(path_list) > select_num * 5:
-        end = len(path_list) - (select_num * 5)
+    if len(path_list) > select_num * 3:
+        end = len(path_list) - (select_num * 3)
         for p in path_list[0:end]:
             p.unlink(True)
 
@@ -32,9 +33,9 @@ if __name__ == '__main__':
     mp.set_start_method('spawn')
 
     args = sys.argv
-    self_play_num = 50
-    epoch_num = 5
-    batch_size = 64
+    self_play_num = 30
+    epoch_num = 10 
+    batch_size = 256 
     if len(args) >= 4:
         self_play_num = int(args[1])
         epoch_num = int(args[2])
@@ -59,7 +60,7 @@ if __name__ == '__main__':
         # 新パラメータ評価部
         update_best_player()
         conv_jit()
-        evaluate_problem()
+        #evaluate_problem()
 
         #if i % 10 == 0:
         #    evaluate_best_player()

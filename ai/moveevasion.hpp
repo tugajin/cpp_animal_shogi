@@ -4,7 +4,6 @@
 #include "game.hpp"
 #include "movelist.hpp"
 #include "attack.hpp"
-#include <unordered_map>
 
 namespace gen {
 
