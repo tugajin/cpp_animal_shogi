@@ -60,8 +60,7 @@ Move execute_descent(game::Position &pos, reward::CountReward &cw) {
     ubfm::g_searcher_global.join();
     //ubfm::g_searcher_global.choice_best_move_e_greedy();
     ubfm::g_searcher_global.choice_best_move_count(cw);
-    ubfm::g_searcher_global.add_replay_buffer(&ubfm::g_searcher_global.root_node, cw);
-    cw.update(ubfm::g_searcher_global.root_node.pos.history());
+    ubfm::g_searcher_global.add_replay_buffer(&ubfm::g_searcher_global.root_node);
     return ubfm::g_searcher_global.root_node.best_move;
 }
 
@@ -84,8 +83,8 @@ void execute_selfplay() {
             Tee<<"自己対局："<<i<<std::endl;
             Tee<<pos<<std::endl;
             ubfm::g_searcher_global.clear_tree();
-            if (pos.is_done() || pos.is_draw_short()) {
-                if (pos.is_draw() || pos.is_draw_short()) {Tee<<"引き分け\n";}
+            if (pos.is_lose() || pos.is_draw(4)) {
+                if (pos.is_draw(4)) {Tee<<"引き分け\n";}
                 if (pos.is_lose()) {Tee<<"負け\n";}
                 g_replay_buffer.write_data();
                 g_replay_buffer.close();
@@ -94,7 +93,11 @@ void execute_selfplay() {
             ubfm::g_searcher_global.DESCENT_PO_NUM = gen::num_legal(pos) * 10;
             
             auto best_move = execute_descent(pos, cw);
+            
             Tee<<ubfm::g_searcher_global.root_node.w<<std::endl;
+
+            cw.update(pos.history());
+
             if (!attack::in_checked(pos)) {
                 const auto mate_move = mate::mate_search(pos,5);
                 if (mate_move != MOVE_NONE) {
@@ -108,7 +111,6 @@ void execute_selfplay() {
         if (true) {
             Tee<<"\n";
             ubfm::g_searcher_global.load_model();
-            cw.clean(1);
             cw.dump();
         }
         Tee<<".";

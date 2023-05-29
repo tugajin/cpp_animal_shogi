@@ -23,15 +23,18 @@ public:
     void init_pos();
     bool is_lose() const ;
     bool is_win() const;
-    bool is_draw() const {
+    bool is_draw(int max_num = 4) const {
         if (this->ply_ >= 400) {
             return true;
         }
         const auto curr_key = this->history_[this->ply_];
+        auto num = 0;
         for (auto ply = this->ply_ - 4; ply >= 0; ply -= 2) {
             const auto prev_key = this->history_[ply];
             if (curr_key == prev_key) {
-                return true;
+                if ((++num) >= max_num) {
+                    return true;
+                }
             }
         }
         return false;
@@ -82,6 +85,8 @@ public:
     Key history() const {
         return this->history_[this->ply_];
     }
+    Position mirror() const;
+    Position rotate() const;
 private:
     ColorPiece square_[SQ_END];//どんな駒が存在しているか？
     int piece_list_index_[SQ_END];//piece_listの何番目か
@@ -371,6 +376,42 @@ void Position::dump() const {
     }
     Tee<<"black_hand:"<<static_cast<int>(this->hand_[BLACK])<<std::endl;
     Tee<<"white_hand:"<<static_cast<int>(this->hand_[WHITE])<<std::endl;
+}
+
+Position Position::mirror() const {
+    Position pos;
+    pos.turn_ = this->turn_;
+    pos.hand_[BLACK] = this->hand_[BLACK];
+    pos.hand_[WHITE] = this->hand_[WHITE];
+    for(auto *fp = SQUARE_INDEX; *fp != SQ_WALL; ++fp) {
+        const auto msq = mirror_sq(*fp);
+        pos.square_[msq] = this->square_[*fp];
+    }
+    pos.ply_ = 0;
+    pos.history_[0] = hash::hash_key(pos);
+    return pos;
+}
+
+Position Position::rotate() const {
+    Position pos;
+    pos.turn_ = change_turn(this->turn_);
+    pos.hand_[BLACK] = this->hand_[WHITE];
+    pos.hand_[WHITE] = this->hand_[BLACK];
+
+    for(auto *fp = SQUARE_INDEX; *fp != SQ_WALL; ++fp) {
+        const auto isq = invert_sq(*fp);
+        auto cp = this->square_[*fp];
+        if (cp != COLOR_EMPTY) {
+            const auto col = change_turn(piece_color(cp));
+            const auto p = to_piece(cp);
+            cp = color_piece(p, col);
+        }
+        pos.square_[isq] = cp;
+    }
+
+    pos.ply_ = 0;
+    pos.history_[0] = hash::hash_key(pos);  
+    return pos;
 }
 
 void test_common() {

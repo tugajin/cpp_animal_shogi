@@ -211,6 +211,14 @@ inline constexpr File sq_file(const Square sq) {
 inline Square invert_sq(const Square sq) {
     return Square(46) - sq;
 }
+
+inline Square mirror_sq(const Square sq) {
+    auto file = sq_file(sq);
+    auto rank = sq_rank(sq);
+    file = static_cast<File>(static_cast<int>(FILE_SIZE) - 1 - static_cast<int>(file));
+    return square(file, rank);
+}
+
 inline int sq_to_index_debug(const Square sq) {
    switch(sq) {
         case SQ_31: return 0;

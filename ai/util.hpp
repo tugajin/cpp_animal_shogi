@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <random>
+#include <iostream>
+#include <thread>
 // constants
 
 #undef FALSE
@@ -149,6 +151,12 @@ std::string trim(const std::string s) {
 	return str;
 }
 
+std::string padding_str(std::string const &str, int n) {
+    std::ostringstream oss;
+    oss << std::setw(n) << str;
+    return oss.str();
+}
+
 bool is_exists_file(const std::string path) {
 	std::ifstream ifs(path);
 	return ifs.is_open();
@@ -174,6 +182,10 @@ template<class T> std::string to_string(T x) {
 	std::stringstream ss;
 	ss << x;
 	return ss.str();
+}
+
+void my_sleep(const int  millisec) {
+	std::this_thread::sleep_for(std::chrono::milliseconds(millisec));
 }
 
 class Timer {

@@ -382,6 +382,24 @@ void test_gen3() {
                 Tee<<pos<<std::endl;
                 Tee<<new_pos<<std::endl;
             });
+
+            const auto mirror_pos = pos.mirror();
+            const auto mirror_pos2 = mirror_pos.mirror();
+            const auto mirror_key2 = hash::hash_key(mirror_pos2);
+
+            ASSERT2(key == mirror_key2,{
+                Tee<<pos<<std::endl;
+                Tee<<mirror_pos2<<std::endl;
+            });
+
+            const auto conv_pos = pos.rotate();
+            const auto conv_pos2 = conv_pos.rotate();
+            const auto conv_key2 = hash::hash_key(conv_pos2);
+            ASSERT2(key == conv_key2,{
+                Tee<<pos<<std::endl;
+                Tee<<conv_pos2<<std::endl;
+            });
+
             if (key_dict.count(hash::hash_key(pos)) == 0){
                 key_dict.insert({hash::hash_key(pos), 1});
             }
