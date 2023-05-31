@@ -16,6 +16,7 @@
 #include "nn.hpp"
 #include "matesearch.hpp"
 #include "countreward.hpp"
+#include "oracle.hpp"
 
 namespace selfplay {
 
@@ -94,7 +95,8 @@ void execute_selfplay() {
             
             auto best_move = execute_descent(pos, cw);
             
-            Tee<<ubfm::g_searcher_global.root_node.w<<std::endl;
+            Tee<<"oracle:"<<oracle::g_oracle.result(pos)<<std::endl;
+            Tee<<"output:"<<ubfm::g_searcher_global.root_node.w<<std::endl;
 
             cw.update(pos.history());
 

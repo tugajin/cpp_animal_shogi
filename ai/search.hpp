@@ -156,22 +156,25 @@ int search(game::Position &pos, int alpha, int beta, int depth) {
     return best_score;
 }
 void test_search() {
-    REP(i, INT_MAX) {
-        game::Position pos;
-        pos = hash::hirate();
-        while(true) {
-            Tee<<"自己対局："<<i<<std::endl;
-            Tee<<pos<<std::endl;
-            if (pos.is_done() || pos.is_draw_short()) {
-                if (pos.is_draw() || pos.is_draw_short()) {Tee<<"引き分け\n";}
-                if (pos.is_lose()) {Tee<<"負け\n";}
-                break;
-            }
-            const auto best_move = search_root(pos,5);
-            Tee<<move_str(best_move)<<std::endl;
-            pos = pos.next(best_move);
-        }
-    }
+    game::Position pos = hash::from_hash(153742799689785355);
+    Tee<<pos<<std::endl;
+    Tee<<move_str(search_root(pos,8))<<std::endl;
+    // REP(i, INT_MAX) {
+    //     game::Position pos;
+    //     pos = hash::hirate();
+    //     while(true) {
+    //         Tee<<"自己対局："<<i<<std::endl;
+    //         Tee<<pos<<std::endl;
+    //         if (pos.is_done() || pos.is_draw_short()) {
+    //             if (pos.is_draw() || pos.is_draw_short()) {Tee<<"引き分け\n";}
+    //             if (pos.is_lose()) {Tee<<"負け\n";}
+    //             break;
+    //         }
+    //         const auto best_move = search_root(pos,5);
+    //         Tee<<move_str(best_move)<<std::endl;
+    //         pos = pos.next(best_move);
+    //     }
+    // }
 }
 
 }

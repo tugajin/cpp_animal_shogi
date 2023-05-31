@@ -85,6 +85,12 @@ public:
     Key history() const {
         return this->history_[this->ply_];
     }
+    Key history(const int ply) const {
+        return this->history_[ply];
+    }
+    int ply() const {
+        return this->ply_;
+    }
     Position mirror() const;
     Position rotate() const;
 private:

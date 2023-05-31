@@ -10,6 +10,7 @@
 #include "hash.hpp"
 #include "nn.hpp"
 #include "countreward.hpp"
+#include "oracle.hpp"
 
 TeeStream Tee;
 
@@ -26,11 +27,13 @@ UBFMSearcherGlobal g_searcher_global;
 namespace selfplay {
 ReplayBuffer g_replay_buffer;
 }
-
+namespace oracle {
+oracle::OracleData g_oracle;
+}
 int main(int /*argc*/, char **/*argv*/){
     check_mode();
     init_table();
-    search::test_search();
-    //selfplay::execute_selfplay();
+    oracle::g_oracle.load();
+    selfplay::execute_selfplay();
     return 0;
 }
