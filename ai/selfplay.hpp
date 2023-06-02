@@ -6,8 +6,6 @@
 #include <thread>
 #include <fstream>
 #include <filesystem>
-#include <torch/torch.h>
-#include <torch/script.h>
 #include "nlohmann/json.hpp"
 #include "util.hpp"
 #include "common.hpp"
@@ -17,6 +15,7 @@
 #include "matesearch.hpp"
 #include "countreward.hpp"
 #include "oracle.hpp"
+#include "reviewbuffer.hpp"
 
 namespace selfplay {
 
@@ -78,20 +77,31 @@ void execute_selfplay() {
     
     REP(i, INT_MAX) {
         game::Position pos;
-        pos = hash::hirate();
+        auto base_po = 10u;
+        auto review_flag = false;
+        if (review::g_review_buffer.size() > 0) {
+            pos = review::g_review_buffer.choice();
+            base_po *= 10;
+            review_flag = true;
+        } else {
+            pos = hash::hirate();
+        }
+
         g_replay_buffer.open();
         while(true) {
             Tee<<"自己対局："<<i<<std::endl;
+            Tee<<"review:"<<review::g_review_buffer.size()<<std::endl;
             Tee<<pos<<std::endl;
             ubfm::g_searcher_global.clear_tree();
             if (pos.is_lose() || pos.is_draw(4)) {
                 if (pos.is_draw(4)) {Tee<<"引き分け\n";}
                 if (pos.is_lose()) {Tee<<"負け\n";}
+endgame:
                 g_replay_buffer.write_data();
                 g_replay_buffer.close();
                 break;
             }
-            ubfm::g_searcher_global.DESCENT_PO_NUM = gen::num_legal(pos) * 10;
+            ubfm::g_searcher_global.DESCENT_PO_NUM = std::min(gen::num_legal(pos) * base_po, 1000u);
             
             auto best_move = execute_descent(pos, cw);
             
@@ -99,23 +109,27 @@ void execute_selfplay() {
             Tee<<"output:"<<ubfm::g_searcher_global.root_node.w<<std::endl;
 
             cw.update(pos.history());
+            if (!review_flag && pos.ply() > 0) {
+                review::g_review_buffer.add(&ubfm::g_searcher_global.root_node);
+            }
 
             if (!attack::in_checked(pos)) {
                 const auto mate_move = mate::mate_search(pos,5);
                 if (mate_move != MOVE_NONE) {
-                    Tee<<"found mate\n";
+                    //Tee<<"found mate\n";
                     best_move = mate_move;
                 }
             } 
             Tee<<move_str(best_move)<<std::endl;
+            if (review_flag) { goto endgame; }
             pos = pos.next(best_move);
         }
         if (true) {
-            Tee<<"\n";
+            //Tee<<"\n";
             ubfm::g_searcher_global.load_model();
             cw.dump();
         }
-        Tee<<".";
+        //Tee<<".";
     }
 }
 void test() {

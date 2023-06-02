@@ -35,7 +35,7 @@ if __name__ == '__main__':
     args = sys.argv
     self_play_num = 30
     epoch_num = 10 
-    batch_size = 256 
+    batch_size = 64 
     if len(args) >= 4:
         self_play_num = int(args[1])
         epoch_num = int(args[2])

@@ -8,7 +8,6 @@
 #include <memory>
 #include <torch/torch.h>
 #include <torch/script.h>
-#include "nlohmann/json.hpp"
 #include "common.hpp"
 #include "util.hpp"
 #include "game.hpp"
@@ -16,6 +15,7 @@
 #include "thread.hpp"
 #include "nn.hpp"
 #include "countreward.hpp"
+#include "oracle.hpp"
 
 namespace selfplay {
 void push_back(const Key hash, const nn::NNScore score, const nn::NNScore delta);
@@ -373,6 +373,7 @@ void UBFMSearcherGlobal::choice_best_move_count(const reward::CountReward &cw) {
         ASSERT(i<this->root_node.child_len);
         auto child = this->root_node.child(i);
         const auto reward = scores[i] * 0.8;
+        const auto oracle = -oracle::g_oracle.result(child->pos);
         if (child->is_resolved()) {
             if (child->is_lose()) {
                 REP(i, this->root_node.child_len) {
@@ -388,7 +389,7 @@ void UBFMSearcherGlobal::choice_best_move_count(const reward::CountReward &cw) {
         } else {
             scores[i] = /*child->n + 1.0 */- child->w + reward;
         }
-        Tee<<move_str(child->parent_move)<<" score:"<<scores[i] <<" n:"<<child->n << " w:" << -child->w << " init_w:" << -child->init_w <<" reward:"<<reward << " org:" << num[i] <<std::endl;
+        Tee<<"n:"<<padding_str(to_string(child->n),4) << " w:" << padding_str(to_string(-child->w),7) << " oracle:" << padding_str(to_string(oracle),2) << " org:" << padding_str(to_string(num[i]),5)<<" "<<move_str(child->parent_move)<<std::endl;
     }
     auto index = -1;
     auto iter = std::max_element(scores.begin(), scores.end());
@@ -398,6 +399,7 @@ void UBFMSearcherGlobal::choice_best_move_count(const reward::CountReward &cw) {
     ASSERT(index<this->root_node.child_len);
     auto child = this->root_node.child(index);
     this->root_node.best_move = child->parent_move;
+    this->root_node.w = -child->w;
 }
 
 void UBFMSearcherGroup::init() {
@@ -465,9 +467,34 @@ bool UBFMSearcherLocal::interrupt(const uint32 current_num, const uint32 simulat
 }
 
 bool UBFMSearcherLocal::interrupt_descent(const uint32 current_num, const uint32 simulation_num) const {
-    // 最大基準の回数の二倍まではやってみる
+    // 最大基準の回数の2倍まではやってみる
     if (current_num >= simulation_num * 2) {
-        Tee<<"over\n";
+        //Tee<<"over\n";
+        return true;
+    }
+    auto mated_num = 0;
+    auto mate_num = 0;
+    REP(i, g_searcher_global.root_node.child_len) {
+        const auto child = g_searcher_global.root_node.child(i);
+        if (-child->w <= -0.9) {
+            mated_num++;
+        }
+        if (-child->w >= 0.9) {
+            mate_num++;
+        }
+    }
+    // 最低2回くらいはやる
+    const auto can_stop = current_num > static_cast<uint32>(2 * g_searcher_global.root_node.child_len);
+    // 全部負けなら終わり
+    if (can_stop && mated_num == g_searcher_global.root_node.child_len) {
+        return true;
+    }
+    // 1手以外は全部負けなら終わり
+    if (can_stop && mated_num + 1 == g_searcher_global.root_node.child_len) {
+        return true;
+    }
+    //勝ちを見つけたら終わり
+    if (can_stop && mate_num > 0) {
         return true;
     }
     if (current_num >= simulation_num) {
@@ -494,7 +521,7 @@ bool UBFMSearcherLocal::interrupt_descent(const uint32 current_num, const uint32
         }
         // 一番選択した手と一番勝ちが高い手が不一致なら追加探索
         if (max_score_index != max_num_index) {
-            Tee<<"+ ";
+            //Tee<<"+ ";
             return false;
         }
         return true;
@@ -507,7 +534,7 @@ template<bool is_descent>void UBFMSearcherLocal::search(const uint32 simulation_
     const auto is_out = (this->thread_id == 0) && (this->group->gpu_id == 0);
     auto i = 0u;
     while(true) {
-        //Tee<<"start simulation:" << i <<"\n";
+        Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
         g_searcher_global.root_node.n++;
         const auto interrupt = (is_descent) ? this->interrupt_descent(i, simulation_num) : this->interrupt(i, simulation_num);
         if (interrupt) {

@@ -405,16 +405,16 @@ void test_gen3() {
             // ASSERT2(result != 99,{
             //     Tee<<pos<<std::endl;
             // })
-            // if (result == 99) {
-            //     Tee<<pos<<std::endl;
-            //     Tee<<"history\n";
-            //     for(auto j = 0; j <= pos.ply(); j++) {
-            //         const auto k = pos.history(j);
-            //         const auto history_pos = hash::from_hash(k);
-            //         Tee<<history_pos<<std::endl;
-            //     }
-            //     Tee<<"-----------------------------------\n";
-            // }
+            if (result == 99) {
+                Tee<<pos<<std::endl;
+                Tee<<"history\n";
+                for(auto j = 0; j <= pos.ply(); j++) {
+                    const auto k = pos.history(j);
+                    const auto history_pos = hash::from_hash(k);
+                    Tee<<history_pos<<std::endl;
+                }
+                Tee<<"-----------------------------------\n";
+            }
             if (key_dict.count(hash::hash_key(pos)) == 0){
                 key_dict.insert({hash::hash_key(pos), 1});
             }

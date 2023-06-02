@@ -11,6 +11,7 @@
 #include "nn.hpp"
 #include "countreward.hpp"
 #include "oracle.hpp"
+#include "reviewbuffer.hpp"
 
 TeeStream Tee;
 
@@ -28,12 +29,16 @@ namespace selfplay {
 ReplayBuffer g_replay_buffer;
 }
 namespace oracle {
-oracle::OracleData g_oracle;
+OracleData g_oracle;
+}
+namespace review {
+ReviewBuffer g_review_buffer;
 }
 int main(int /*argc*/, char **/*argv*/){
     check_mode();
     init_table();
     oracle::g_oracle.load();
     selfplay::execute_selfplay();
+    //review::test_review();
     return 0;
 }
