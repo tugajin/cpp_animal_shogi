@@ -109,9 +109,9 @@ endgame:
             Tee<<"output:"<<ubfm::g_searcher_global.root_node.w<<std::endl;
 
             cw.update(pos.history());
-            if (!review_flag && pos.ply() > 0) {
+            /*if (!review_flag && pos.ply() > 0) {
                 review::g_review_buffer.add(&ubfm::g_searcher_global.root_node);
-            }
+            }*/
 
             if (!attack::in_checked(pos)) {
                 const auto mate_move = mate::mate_search(pos,5);

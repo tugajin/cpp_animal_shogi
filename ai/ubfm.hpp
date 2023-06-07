@@ -93,7 +93,7 @@ public:
     bool is_terminal() const {
         return child_len == -1;
     }
-        
+
     std::string str(const bool is_root = true) const {
         const std::string padding = is_root ? "" :"        ";
         std::string str = "---------------------------\n";
@@ -103,8 +103,8 @@ public:
         str += padding + "n:" + to_string(n) + "\n";
         str += padding + "child_len:" + to_string(child_len) + "\n";
         str += padding + "ply:" + to_string(ply) + "\n";
-        str += padding + "parent_move:" + to_string(parent_move) + "\n";
-        str += padding + "best_move:" + to_string(best_move) + "\n";
+        str += padding + "parent_move:" + move_str(parent_move) + "\n";
+        str += padding + "best_move:" + move_str(best_move) + "\n";
         str += padding + "state:" + to_string(state) + "\n";
         str += "---------------------------\n";
         if (is_root && !this->is_terminal()) {
@@ -124,6 +124,45 @@ public:
         ASSERT(index >= 0);
         return child_nodes[index].get();
     }
+    bool is_ok() const {
+        if (this->is_terminal()) {
+            if (this->n != 1 && this->n != 2) {
+                Tee<<"terminal error\n";
+                return false;
+            }
+            return true;
+        } else {
+            const auto parent_n = this->n;
+            auto child_n = 0;
+            REP(i, this->child_len) {
+                const auto child = this->child(i);
+                child_n += child->n;
+            }
+            if (parent_n != (child_n+1)) {
+                Tee<<"parent error\n";
+                return false;
+            }
+            return true;
+        }
+    }
+    bool is_ok2() const {
+        if (this->is_terminal()) {
+            // こないはず
+            Tee<<"terminal error2\n";
+            return false;
+        }
+        const auto parent_n = this->n;
+        auto child_n = 0;
+        REP(i, this->child_len) {
+            const auto child = this->child(i);
+            child_n += child->n;
+        }
+        if (parent_n != child_n) {
+            Tee<<"parent error2\n";
+            return false;
+        }
+        return true;
+    }
     game::Position pos;
     std::unique_ptr<std::unique_ptr<Node>[]> child_nodes;
     Lockable lock_node;
@@ -132,10 +171,9 @@ public:
     NodeState state;
     nn::NNScore w;
     nn::NNScore init_w;
-    uint32 n;
+    int n;
     int child_len;
     int ply;
-
 };
 class UBFMSearcherGroup;
 
@@ -155,7 +193,8 @@ public:
     //    // this->root_node = std::move(local.root_node);
     //     return *this;
     // }
-    template<bool is_descent = false>void search(const uint32 simulation_num);
+    void search(const uint32 simulation_num);
+    void search_descent(const uint32 simulation_num);
     bool is_ok();
     void run();
     void join();
@@ -165,7 +204,6 @@ private:
     void predict(Node *node);
     void expand(Node *node);
     template<bool is_descent> Node *next_child(const Node *node) const;
-    Node *next_child2(const Node *node) const;
     void update_node(Node *node);
     void add_node(const game::Position &pos,const Move parent_move, int ply);
     bool interrupt(const uint32 current_num, const uint32 simulation_num) const;
@@ -389,7 +427,11 @@ void UBFMSearcherGlobal::choice_best_move_count(const reward::CountReward &cw) {
         } else {
             scores[i] = /*child->n + 1.0 */- child->w + reward;
         }
-        Tee<<"n:"<<padding_str(to_string(child->n),4) << " w:" << padding_str(to_string(-child->w),7) << " oracle:" << padding_str(to_string(oracle),2) << " org:" << padding_str(to_string(num[i]),5)<<" "<<move_str(child->parent_move)<<std::endl;
+        Tee<<"n:"<<padding_str(to_string(child->n),3) 
+            << " w:" << padding_str(to_string(-child->w),7) 
+            << " oracle:" << padding_str(to_string(oracle),2) 
+            << " org:" << padding_str(to_string(num[i]),3)<<" "
+            <<move_str(child->parent_move)<<std::endl;
     }
     auto index = -1;
     auto iter = std::max_element(scores.begin(), scores.end());
@@ -445,9 +487,9 @@ void UBFMSearcherLocal::run() {
         //Tee<<"thread:"<<this->thread_id<<" start"<<std::endl;
         if (g_searcher_global.IS_DESCENT) {
             assert(g_searcher_global.DESCENT_PO_NUM > 0);
-            this->search<true>(g_searcher_global.DESCENT_PO_NUM);
+            this->search_descent(g_searcher_global.DESCENT_PO_NUM);
         } else {
-            this->search<false>(int(2000 / g_searcher_global.THREAD_NUM));
+            this->search(int(2000 / g_searcher_global.THREAD_NUM));
         }
     });
 }
@@ -467,6 +509,9 @@ bool UBFMSearcherLocal::interrupt(const uint32 current_num, const uint32 simulat
 }
 
 bool UBFMSearcherLocal::interrupt_descent(const uint32 current_num, const uint32 simulation_num) const {
+    if (g_searcher_global.root_node.is_resolved()) {
+        return true;
+    }
     // 最大基準の回数の2倍まではやってみる
     if (current_num >= simulation_num * 2) {
         //Tee<<"over\n";
@@ -503,7 +548,7 @@ bool UBFMSearcherLocal::interrupt_descent(const uint32 current_num, const uint32
             return true;
         }
         nn::NNScore max_score = static_cast<nn::NNScore>(-1.0);
-        uint32 max_num = 0u;
+        auto max_num = -1;
         auto max_score_index = -1;
         auto max_num_index = -1;
         REP(i, g_searcher_global.root_node.child_len) {
@@ -528,30 +573,34 @@ bool UBFMSearcherLocal::interrupt_descent(const uint32 current_num, const uint32
     }
     return false;
 }
-
-template<bool is_descent>void UBFMSearcherLocal::search(const uint32 simulation_num) {
+void UBFMSearcherLocal::search(const uint32 simulation_num) {
     
     const auto is_out = (this->thread_id == 0) && (this->group->gpu_id == 0);
-    auto i = 0u;
-    while(true) {
+    for(auto i = 0u ;; ++i) {
         Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
-        g_searcher_global.root_node.n++;
-        const auto interrupt = (is_descent) ? this->interrupt_descent(i, simulation_num) : this->interrupt(i, simulation_num);
+        const auto interrupt = this->interrupt(i, simulation_num);
         if (interrupt) {
             break;
         }
-        if (is_descent) {
-            this->evaluate_descent(&g_searcher_global.root_node);
-        } else {
-            this->evaluate(&g_searcher_global.root_node);
-        }
+        //g_searcher_global.root_node.n++;
+        this->evaluate(&g_searcher_global.root_node);
         if (is_out) {
-            //Tee<<this->str<false,true>(&this->root_node)<<std::endl;
+            Tee<<g_searcher_global.root_node.str()<<std::endl;
         }
-        ++i;
     }
     if (is_out) {
-        //Tee<<g_searcher_global.root_node.str()<<std::endl;
+        Tee<<g_searcher_global.root_node.str()<<std::endl;
+    }
+}
+void UBFMSearcherLocal::search_descent(const uint32 simulation_num) {
+    for(auto i = 0u ;; ++i) {
+        Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
+        const auto interrupt = this->interrupt_descent(i, simulation_num);
+        if (interrupt) {
+            break;
+        }
+        //g_searcher_global.root_node.n++;
+        this->evaluate_descent(&g_searcher_global.root_node);
     }
 }
 
@@ -563,6 +612,8 @@ void UBFMSearcherLocal::evaluate(Node *node) {
     ASSERT(node != nullptr);
     ASSERT(std::fabs(node->w) <= 1);
     node->lock_node.lock();
+    node->n++;
+
     if (node->pos.is_draw()) {
         node->w = nn::NNScore(0.0);
         node->state = NodeState::NodeDraw;
@@ -589,13 +640,21 @@ void UBFMSearcherLocal::evaluate(Node *node) {
     }
     node->lock_node.lock();
     this->update_node(node);
-    
+
     node->lock_node.unlock();
 }
 
 void UBFMSearcherLocal::evaluate_descent(Node *node) {
     //ASSERT(!node->is_resolved());
+    node->n++;
+    ASSERT2(node->pos.is_ok(),{
+        Tee<<node->pos<<std::endl;
+    })
     ASSERT(std::fabs(node->w) <= 1);
+    ASSERT2(node->is_ok(),{
+        Tee<<node->str()<<std::endl;
+    });
+    
     if (node->pos.is_draw()) {
         node->w = nn::NNScore(0.0);
         node->state = NodeState::NodeDraw;
@@ -611,8 +670,11 @@ void UBFMSearcherLocal::evaluate_descent(Node *node) {
         this->predict(node);
         this->update_node(node);
     } 
-    auto next_node = this->next_child<true>(node);
-    if (next_node != nullptr) {
+    if (!node->is_resolved()) {
+        auto next_node = this->next_child<true>(node);
+        ASSERT2(next_node != nullptr,{
+            Tee<<node->str()<<std::endl;
+        })
         this->evaluate_descent(next_node);
         this->update_node(node);
     }
@@ -692,7 +754,6 @@ void UBFMSearcherLocal::predict(Node *node) {
         ASSERT2(std::fabs(score)<=1,{
             Tee<<child->ply<<std::endl;
         });
-        child->n += 1;
         child->w = child->init_w = score;
         child->state = state;
     }
@@ -700,8 +761,8 @@ void UBFMSearcherLocal::predict(Node *node) {
 template<bool is_descent> Node *UBFMSearcherLocal::next_child(const Node *node) const {
     ASSERT(node->child_len >= 0);
     Node *best_child = nullptr;
-    nn::NNScore best_score = nn::NNScore(-1);
-    auto min_num = UINT32_MAX;
+    nn::NNScore best_score = nn::NNScore(-10000);
+    auto min_num = INT32_MAX;
     REP(i, node->child_len) {
 
         ASSERT(i>=0);
@@ -725,9 +786,6 @@ template<bool is_descent> Node *UBFMSearcherLocal::next_child(const Node *node) 
             }
         }
     }
-    if (best_child != nullptr) {
-        best_child->n++;
-    }
     return best_child;
 }
 
@@ -735,7 +793,7 @@ void UBFMSearcherLocal::update_node(Node *node) {
 
     Node *best_child = nullptr;
     auto max_value = nn::NNScore(-1);
-    auto max_num = 0u;
+    auto max_num = -1;
     auto lose_num = 0;
     auto draw_num = 0;
     const auto child_len = node->child_len;
@@ -776,7 +834,6 @@ void UBFMSearcherLocal::update_node(Node *node) {
             max_value = -child->w;
             max_num = child->n;
         } else if (-child->w == max_value) {
-            ASSERT(child->n > 0);
             if (child->n > max_num) {
                 best_child = child;
                 max_value = -child->w;

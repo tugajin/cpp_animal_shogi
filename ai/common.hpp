@@ -395,7 +395,9 @@ inline std::string sq_str(const Square sq) {
 
 inline std::string move_str(const Move m) {
     std::string ret = "";
-    if (move_is_drop(m)) {
+    if (m == MOVE_NONE) {
+        ret += "MOVE_NONE";
+    } else if (move_is_drop(m)) {
         ret +="打:" + sq_str(move_to(m))+":"+piece_str(move_piece(m));
     } else {
         ret +="from:"+ sq_str(move_from(m)) + " to:" + sq_str(move_to(m)) +" prom:"+to_string(move_is_prom(m));
