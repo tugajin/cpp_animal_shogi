@@ -12,6 +12,7 @@
 #include "countreward.hpp"
 #include "oracle.hpp"
 #include "reviewbuffer.hpp"
+#include "model.hpp"
 
 TeeStream Tee;
 
@@ -26,7 +27,8 @@ namespace ubfm {
 UBFMSearcherGlobal g_searcher_global;
 }
 namespace selfplay {
-ReplayBuffer g_replay_buffer;
+SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
+int g_thread_counter;
 }
 namespace oracle {
 OracleData g_oracle;
@@ -34,11 +36,20 @@ OracleData g_oracle;
 namespace review {
 ReviewBuffer g_review_buffer;
 }
-int main(int /*argc*/, char **/*argv*/){
+namespace model {
+GPUModel g_gpu_model[GPUModel::GPU_NUM];
+}
+int main(int argc, char **argv){
+    auto num = 999999999;
+    if (argc > 1) {
+        num = std::stoi(std::string(argv[1]));
+    }
     check_mode();
     init_table();
-    oracle::g_oracle.load();
-    selfplay::execute_selfplay();
+    //oracle::g_oracle.load();
+    model::g_gpu_model[0].load_model(0);
+    selfplay::execute_selfplay(num);
     //review::test_review();
+    //model::test_model();
     return 0;
 }

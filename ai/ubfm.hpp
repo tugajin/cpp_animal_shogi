@@ -6,20 +6,14 @@
 #include <chrono>
 #include <thread>
 #include <memory>
-#include <torch/torch.h>
-#include <torch/script.h>
 #include "common.hpp"
 #include "util.hpp"
 #include "game.hpp"
-#include "selfplay.hpp"
 #include "thread.hpp"
 #include "nn.hpp"
 #include "countreward.hpp"
 #include "oracle.hpp"
-
-namespace selfplay {
-void push_back(const Key hash, const nn::NNScore score, const nn::NNScore delta);
-}
+#include "model.hpp"
 
 namespace ubfm {
 
@@ -126,7 +120,7 @@ public:
     }
     bool is_ok() const {
         if (this->is_terminal()) {
-            if (this->n != 1 && this->n != 2) {
+            if (this->n != 1 && this->n != 0) {
                 Tee<<"terminal error\n";
                 return false;
             }
@@ -175,109 +169,60 @@ public:
     int child_len;
     int ply;
 };
-class UBFMSearcherGroup;
+class UBFMSearcherGlobal;
 
 class UBFMSearcherLocal {
 public:
-    UBFMSearcherLocal(UBFMSearcherGroup *g, int id) : 
-                     group(g),
+    UBFMSearcherLocal(int id, int gpu_id, UBFMSearcherGlobal * global) : 
+                     global(global),
                      thread(nullptr),
-                     thread_id(id){
+                     thread_id(id),
+                     gpu_id(gpu_id) {
     }
-    // UBFMSearcherLocal(UBFMSearcherLocal &&local) : thread(nullptr),
-    //                                              thread_id(local.thread_id),
-    //                                              group(local.group) {
-    //     //this->root_node = std::move(local.root_node);
-    // }
-    // UBFMSearcherLocal& operator=(UBFMSearcherLocal &&local) {
-    //    // this->root_node = std::move(local.root_node);
-    //     return *this;
-    // }
     void search(const uint32 simulation_num);
     void search_descent(const uint32 simulation_num);
+    void selfplay() {};
     bool is_ok();
     void run();
     void join();
-private:
+protected:
     void evaluate(Node *node);
-    void evaluate_descent(Node *node);
     void predict(Node *node);
     void expand(Node *node);
     template<bool is_descent> Node *next_child(const Node *node) const;
     void update_node(Node *node);
     void add_node(const game::Position &pos,const Move parent_move, int ply);
     bool interrupt(const uint32 current_num, const uint32 simulation_num) const;
-    bool interrupt_descent(const uint32 current_num, const uint32 simulation_num) const;
-    
-    UBFMSearcherGroup *group;
+    Node *root_node() const ;
+
+    UBFMSearcherGlobal *global;
     std::thread *thread;
     int thread_id;
-};
-
-class UBFMSearcherGroup {
-public:
-    UBFMSearcherGroup(const int id):
-                    device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU, id) ,
-                    gpu_id(id){
-        if (torch::cuda::is_available()) {
-            Tee<<"GPU:"<<id<<"\n";
-        } else {
-            Tee<<"CPU:"<<id<<"\n";
-        }
-    }
-    // UBFMSearcherGroup(UBFMSearcherGroup &&local) :
-    //                 device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU, 0) {
-    //    // this->root_node = std::move(local.root_node);
-    // }
-    /*UBFMSearcherGroup& operator=(UBFMSearcherGroup &&p) {
-        return *this;
-    }*/
-    void init();
-    void load_model();
-    void run();
-    void join();
-    torch::Device device;
-    torch::jit::script::Module module;
-    Lockable lock_gpu;
     int gpu_id;
-
-private:
-    std::vector<UBFMSearcherLocal> worker;
 };
 
 class UBFMSearcherGlobal {
 public:
-    std::unique_ptr<Node> nodes;
+    UBFMSearcherGlobal() :
+                       THREAD_NUM(1){}
+    UBFMSearcherGlobal(const int thread_num) : 
+                       THREAD_NUM(thread_num){}
     Node root_node;
     void init();
-    void load_model();
     void clear_tree();
     void run();
     void join();
     void choice_best_move();
-    void choice_best_move_e_greedy();
-    void choice_best_move_count(const reward::CountReward &cw);
-    void add_replay_buffer(const Node * node) const ;
 
-    int GPU_NUM = 1;
-    int THREAD_NUM = 1;
-    double TEMPERATURE = 0.0;
-    uint32 DESCENT_PO_NUM = 2000;
-    bool IS_DESCENT = false;
-private:
-    std::vector<UBFMSearcherGroup> worker;
+    int THREAD_NUM;
+protected:
+    std::vector<UBFMSearcherLocal> worker;
 };
 
 extern UBFMSearcherGlobal g_searcher_global;
 
-nn::NNScore noise(double div = 1000) {
-    auto sign = rand_double();
-    auto value = rand_double() / div;
-    return sign >= 0.5 ? value : -value;
-}
-
 Move think_ubfm(game::Position &pos) {
-    assert(g_searcher_global.root_node.n == 0);
+    ASSERT(g_searcher_global.root_node.n == 0);
     g_searcher_global.root_node.pos = pos;
     g_searcher_global.run();
     g_searcher_global.join();
@@ -285,35 +230,31 @@ Move think_ubfm(game::Position &pos) {
     return g_searcher_global.root_node.best_move;
 }
 
+Node *UBFMSearcherLocal::root_node() const {
+    return &this->global->root_node;
+}
+
 void UBFMSearcherGlobal::init() {
     this->worker.clear();
     this->worker.shrink_to_fit();
-    REP(i, UBFMSearcherGlobal::GPU_NUM) {
-        this->worker.emplace_back(i);
-        this->worker[i].init();
-        this->worker[i].load_model();
+    REP(i, UBFMSearcherGlobal::THREAD_NUM) {
+        this->worker.emplace_back(i,0,this);
     }
     this->clear_tree();
 }
 
-void UBFMSearcherGlobal::load_model() {
-    REP(i, UBFMSearcherGlobal::GPU_NUM) {
-        this->worker[i].load_model();
-    }
-}
-
 void UBFMSearcherGlobal::clear_tree() {
     this->root_node.init();
-    this->nodes = std::make_unique<Node>(); 
 }
 
 void UBFMSearcherGlobal::run() {
-    REP(i, UBFMSearcherGlobal::GPU_NUM) {
+    REP(i, UBFMSearcherGlobal::THREAD_NUM) {
         this->worker[i].run();
     }
 }
+
 void UBFMSearcherGlobal::join() {
-    REP(i, UBFMSearcherGlobal::GPU_NUM) {
+    REP(i, UBFMSearcherGlobal::THREAD_NUM) {
         this->worker[i].join();
     }
 }
@@ -352,145 +293,9 @@ void UBFMSearcherGlobal::choice_best_move() {
     this->root_node.best_move = child->parent_move;
 }
 
-void UBFMSearcherGlobal::choice_best_move_e_greedy() {
-    std::vector<double> scores;
-    REP(i, this->root_node.child_len) {
-        scores.push_back(0.0);
-    }
-    auto find_resolved_flag = false;
-    REP(i, this->root_node.child_len) {
-        ASSERT(i>=0);
-        ASSERT(i<this->root_node.child_len);
-        auto child = this->root_node.child(i);
-        if (child->is_resolved()) {
-            if (child->is_lose()) {
-                REP(i, this->root_node.child_len) {
-                    scores[i] = 0.0;
-                }
-                scores[i] = 1.0;
-                find_resolved_flag = true;
-                break;
-            } else if (child->is_draw()) {
-                scores[i] = 0.0 + (rand_double() / 1000);
-            } else if (child->is_win()) {
-                scores[i] = static_cast<double>(score_lose(0)) + (rand_double() / 1000);
-            }
-        } else {
-            scores[i] = child->n + 1.0 - child->w;
-        }
-    }
-    auto index = -1;
-    if (!find_resolved_flag && rand_double() < this->TEMPERATURE) {
-        Tee<<"random_move\n";
-        index = my_rand(this->root_node.child_len);
-    } else {
-        Tee<<"best_move\n";
-        auto iter = std::max_element(scores.begin(), scores.end());
-        index = std::distance(scores.begin(), iter);
-    }
-    ASSERT(index>=0);
-    ASSERT(index<this->root_node.child_len);
-    auto child = this->root_node.child(index);
-    this->root_node.best_move = child->parent_move;
-}
-
-void UBFMSearcherGlobal::choice_best_move_count(const reward::CountReward &cw) {
-    std::vector<double> scores;
-    std::vector<uint64> num;
-    REP(i, this->root_node.child_len) {
-
-        ASSERT(i>=0);
-        ASSERT(i<this->root_node.child_len);
-        auto child = this->root_node.child(i);
-        const auto r = 1 + cw.get(child->pos.history());
-        scores.push_back((1 / std::sqrt(r)));
-        num.push_back(r);
-    }
-    REP(i, this->root_node.child_len) {
-        ASSERT(i>=0);
-        ASSERT(i<this->root_node.child_len);
-        auto child = this->root_node.child(i);
-        const auto reward = scores[i] * 0.8;
-        const auto oracle = -oracle::g_oracle.result(child->pos);
-        if (child->is_resolved()) {
-            if (child->is_lose()) {
-                REP(i, this->root_node.child_len) {
-                    scores[i] = 0;
-                }
-                scores[i] = 1;
-                break;
-            } else if (child->is_draw()) {
-                scores[i] = 0;
-            } else if (child->is_win()) {
-                scores[i] = -1.0 ;
-            }
-        } else {
-            scores[i] = /*child->n + 1.0 */- child->w + reward;
-        }
-        Tee<<"n:"<<padding_str(to_string(child->n),3) 
-            << " w:" << padding_str(to_string(-child->w),7) 
-            << " oracle:" << padding_str(to_string(oracle),2) 
-            << " org:" << padding_str(to_string(num[i]),3)<<" "
-            <<move_str(child->parent_move)<<std::endl;
-    }
-    auto index = -1;
-    auto iter = std::max_element(scores.begin(), scores.end());
-    index = std::distance(scores.begin(), iter);
-
-    ASSERT(index>=0);
-    ASSERT(index<this->root_node.child_len);
-    auto child = this->root_node.child(index);
-    this->root_node.best_move = child->parent_move;
-    this->root_node.w = -child->w;
-}
-
-void UBFMSearcherGroup::init() {
-
-    this->worker.clear();
-    this->worker.shrink_to_fit();
-
-    Tee<<"init group:"<<this->gpu_id<<" worker\n";
-    REP(i, g_searcher_global.THREAD_NUM) {
-        this->worker.emplace_back(this,i);
-    }
-}
-void UBFMSearcherGroup::load_model() {
-    this->lock_gpu.lock();
-    REP(i, 10) {
-        try {
-            this->module = torch::jit::load("./model/best_single_jit.pt",this->device);
-            this->module.eval();
-            this->lock_gpu.unlock();
-            return;
-        } catch (const c10::Error& e) {
-            Tee << "error loading the model\n";
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));        //1秒間スリープします
-            continue;
-        }
-    }
-    this->lock_gpu.unlock();
-    std::exit(EXIT_FAILURE);
-}
-
-void UBFMSearcherGroup::run() {
-    REP(i, g_searcher_global.THREAD_NUM) {
-        this->worker[i].run();
-    }
-}
-void UBFMSearcherGroup::join() {
-    REP(i, g_searcher_global.THREAD_NUM) {
-        this->worker[i].join();
-    }
-}
 void UBFMSearcherLocal::run() {
 	this->thread = new std::thread([this]() {
-        //Tee<<"thread:"<<this->thread_id<<" start"<<std::endl;
-        if (g_searcher_global.IS_DESCENT) {
-            assert(g_searcher_global.DESCENT_PO_NUM > 0);
-            this->search_descent(g_searcher_global.DESCENT_PO_NUM);
-        } else {
-            this->search(int(2000 / g_searcher_global.THREAD_NUM));
-        }
+        this->search(int(2000 / this->global->THREAD_NUM));
     });
 }
 void UBFMSearcherLocal::join() {
@@ -499,7 +304,7 @@ void UBFMSearcherLocal::join() {
 }
 
 bool UBFMSearcherLocal::interrupt(const uint32 current_num, const uint32 simulation_num) const {
-    if (g_searcher_global.root_node.is_resolved()) {
+    if (this->root_node()->is_resolved()) {
         return true;
     }
     if (current_num >= simulation_num) {
@@ -508,99 +313,22 @@ bool UBFMSearcherLocal::interrupt(const uint32 current_num, const uint32 simulat
     return false;
 }
 
-bool UBFMSearcherLocal::interrupt_descent(const uint32 current_num, const uint32 simulation_num) const {
-    if (g_searcher_global.root_node.is_resolved()) {
-        return true;
-    }
-    // 最大基準の回数の2倍まではやってみる
-    if (current_num >= simulation_num * 2) {
-        //Tee<<"over\n";
-        return true;
-    }
-    auto mated_num = 0;
-    auto mate_num = 0;
-    REP(i, g_searcher_global.root_node.child_len) {
-        const auto child = g_searcher_global.root_node.child(i);
-        if (-child->w <= -0.9) {
-            mated_num++;
-        }
-        if (-child->w >= 0.9) {
-            mate_num++;
-        }
-    }
-    // 最低2回くらいはやる
-    const auto can_stop = current_num > static_cast<uint32>(2 * g_searcher_global.root_node.child_len);
-    // 全部負けなら終わり
-    if (can_stop && mated_num == g_searcher_global.root_node.child_len) {
-        return true;
-    }
-    // 1手以外は全部負けなら終わり
-    if (can_stop && mated_num + 1 == g_searcher_global.root_node.child_len) {
-        return true;
-    }
-    //勝ちを見つけたら終わり
-    if (can_stop && mate_num > 0) {
-        return true;
-    }
-    if (current_num >= simulation_num) {
-        //完全解析済なら終わり
-        if (g_searcher_global.root_node.is_resolved()) {
-            return true;
-        }
-        nn::NNScore max_score = static_cast<nn::NNScore>(-1.0);
-        auto max_num = -1;
-        auto max_score_index = -1;
-        auto max_num_index = -1;
-        REP(i, g_searcher_global.root_node.child_len) {
-            ASSERT(i>=0);
-            ASSERT(i<g_searcher_global.root_node.child_len);
-            const auto child = g_searcher_global.root_node.child(i);
-            if (-child->w > max_score) {
-                max_score = -child->w;
-                max_score_index = i;
-            }
-            if (child->n > max_num) {
-                max_num = child->n;
-                max_num_index = i;
-            }
-        }
-        // 一番選択した手と一番勝ちが高い手が不一致なら追加探索
-        if (max_score_index != max_num_index) {
-            //Tee<<"+ ";
-            return false;
-        }
-        return true;
-    }
-    return false;
-}
 void UBFMSearcherLocal::search(const uint32 simulation_num) {
     
-    const auto is_out = (this->thread_id == 0) && (this->group->gpu_id == 0);
+    const auto is_out = (this->thread_id == 0) && (this->gpu_id == 0);
     for(auto i = 0u ;; ++i) {
         Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
         const auto interrupt = this->interrupt(i, simulation_num);
         if (interrupt) {
             break;
         }
-        //g_searcher_global.root_node.n++;
-        this->evaluate(&g_searcher_global.root_node);
+        this->evaluate(this->root_node());
         if (is_out) {
-            Tee<<g_searcher_global.root_node.str()<<std::endl;
+            Tee<<this->root_node()->str()<<std::endl;
         }
     }
     if (is_out) {
-        Tee<<g_searcher_global.root_node.str()<<std::endl;
-    }
-}
-void UBFMSearcherLocal::search_descent(const uint32 simulation_num) {
-    for(auto i = 0u ;; ++i) {
-        Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
-        const auto interrupt = this->interrupt_descent(i, simulation_num);
-        if (interrupt) {
-            break;
-        }
-        //g_searcher_global.root_node.n++;
-        this->evaluate_descent(&g_searcher_global.root_node);
+        Tee<<this->root_node()->str()<<std::endl;
     }
 }
 
@@ -644,42 +372,6 @@ void UBFMSearcherLocal::evaluate(Node *node) {
     node->lock_node.unlock();
 }
 
-void UBFMSearcherLocal::evaluate_descent(Node *node) {
-    //ASSERT(!node->is_resolved());
-    node->n++;
-    ASSERT2(node->pos.is_ok(),{
-        Tee<<node->pos<<std::endl;
-    })
-    ASSERT(std::fabs(node->w) <= 1);
-    ASSERT2(node->is_ok(),{
-        Tee<<node->str()<<std::endl;
-    });
-    
-    if (node->pos.is_draw()) {
-        node->w = nn::NNScore(0.0);
-        node->state = NodeState::NodeDraw;
-        return;
-    } 
-    if (node->pos.is_lose()) {
-        node->w = score_lose(node->ply);
-        node->state = NodeState::NodeLose;
-        return;
-    }
-    if (node->is_terminal()) {
-        this->expand(node);
-        this->predict(node);
-        this->update_node(node);
-    } 
-    if (!node->is_resolved()) {
-        auto next_node = this->next_child<true>(node);
-        ASSERT2(next_node != nullptr,{
-            Tee<<node->str()<<std::endl;
-        })
-        this->evaluate_descent(next_node);
-        this->update_node(node);
-    }
-}
-
 void UBFMSearcherLocal::expand(Node *node) {
     auto moveList = movelist::MoveList();
     gen::legal_moves(node->pos, moveList);
@@ -700,36 +392,27 @@ void UBFMSearcherLocal::predict(Node *node) {
     ASSERT2(node->child_len > 0,{
         Tee<<node->pos<<std::endl;
     });
-
-    std::vector<at::Tensor> tensor_list;
-    
+    // Timer timer;
+    // timer.start();
+    std::vector<nn::Feature> feat_list;
+    std::vector<nn::NNScore> outputs_list;
+    //Tee<<"  init:"<<timer.elapsed()<<std::endl;
     REP(i, node->child_len) {
         ASSERT(i>=0);
         ASSERT(i<node->child_len);
         auto child = node->child(i);
         auto &pos = child->pos;
-        auto f = nn::feature(pos);
-        std::vector<at::Tensor> v;
-        REP(j, nn::FEAT_SIZE) {
-            v.push_back(torch::tensor(torch::ArrayRef<int>(f[j])));
-        }
-        auto f_all = torch::stack(v).reshape({nn::FEAT_SIZE, FILE_SIZE, RANK_SIZE});
-        tensor_list.push_back(f_all);
+        feat_list.push_back(nn::feature(pos));
     }
-    auto feat_tensor = torch::stack(tensor_list);
+    //Tee<<"  push_back:"<<timer.elapsed()<<std::endl;
 
-    this->group->lock_gpu.lock();
+    model::predict(this->gpu_id, feat_list, outputs_list);
     
-    feat_tensor = feat_tensor.to(this->group->device,torch::kFloat);
-    std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(feat_tensor);
-    auto output = this->group->module.forward(inputs).toTensor();
-    
-    this->group->lock_gpu.unlock();
+    //Tee<<"  predict:"<<timer.elapsed()<<std::endl;
 
     REP(i, node->child_len) {
         auto state = NodeUnknown;
-        auto score = nn::to_nnscore(output[i][0].item<float>());     
+        auto score = outputs_list[i];
         if (score >= nn::NNScore(1.0)) {
             score = nn::NNScore(0.8999);
         } else if (score <= nn::NNScore(-1.0)) {
@@ -747,16 +430,17 @@ void UBFMSearcherLocal::predict(Node *node) {
         } else if (pos.is_lose()) {
             score = score_lose(child->ply);
             state = NodeLose;
-        } /*else if (pos.has_win() != -1) {
+        } else if (pos.is_win()) {
             score = score_win(child->ply);
             state = NodeWin;
-        }*/
+        }
         ASSERT2(std::fabs(score)<=1,{
             Tee<<child->ply<<std::endl;
         });
         child->w = child->init_w = score;
         child->state = state;
     }
+    //Tee<<"  end:"<<timer.elapsed()<<std::endl;
 }
 template<bool is_descent> Node *UBFMSearcherLocal::next_child(const Node *node) const {
     ASSERT(node->child_len >= 0);
@@ -864,56 +548,6 @@ void UBFMSearcherLocal::update_node(Node *node) {
     }
     node->w = -best_child->w;
     node->best_move = best_child->parent_move;
-}
-
-
-void UBFMSearcherGlobal::add_replay_buffer(const Node * node) const {
-    const auto key = hash::hash_key(node->pos);
-    selfplay::push_back(key, node->w, std::fabs(node->w - node->init_w));
-    REP(i, node->child_len) {
-
-        ASSERT(i>=0);
-        ASSERT(i<node->child_len);
-        auto child = node->child(i);
-
-        if (child->is_terminal() && !child->is_resolved()) {
-            continue;
-        }
-        this->add_replay_buffer(child);
-    }
-}
-void test_ubfm() {
-    ubfm::g_searcher_global.init();
-    game::Position pos;
-    Tee<<pos<<std::endl;
-    Timer timer;
-    timer.start();
-    Tee<<think_ubfm(pos)<<std::endl;
-    timer.stop();
-    Tee<<timer.elapsed()<<std::endl;
-}
-void test_ubfm2() {
-    torch::Device device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
-    //torch::Device device(torch::kCPU);
-    auto module = torch::jit::load("./model/best_single_jit.pt",device);
-    game::Position p;
-    auto ff = [&](game::Position pos) {
-        auto f = nn::feature(pos);
-        std::vector<at::Tensor> v;
-        REP(i, nn::FEAT_SIZE) {
-            auto t = torch::tensor(torch::ArrayRef<int>((f[i])));
-            v.push_back(t);
-        }
-        auto f_all = torch::stack(v,0);
-        f_all = f_all.reshape({1, nn::FEAT_SIZE, 3, 3});
-        f_all = f_all.to(device,torch::kFloat);
-        std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(f_all);
-        auto output = module.forward(inputs).toTensor();
-        Tee<<pos<<std::endl;
-        Tee<<output.item<float>()<<std::endl;
-    };
-    ff(p);
 }
 
 

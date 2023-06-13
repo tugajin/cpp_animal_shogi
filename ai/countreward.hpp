@@ -18,10 +18,12 @@ using json = nlohmann::json;
 class CountReward {
 private:
     json info;
-    static constexpr auto path = "count.json";
+    std::string path;
+    int id;
 public:
-    CountReward() {
+    CountReward(const int id) : id(id) {
         this->info = {};
+        this->path = "count" + to_string(id) + ".json";
         this->load();
     }
     void update(const Key k) {
@@ -61,33 +63,20 @@ public:
         this->clean(size+1);
     }
     void load() {
-        if (!is_exists_file(CountReward::path)) {
+        if (!is_exists_file(this->path)) {
             Tee << "not found count reward file\n";
             return;
         }
-        std::ifstream f(CountReward::path);
+        std::ifstream f(this->path);
         this->info = json::parse(f);
     }
     void dump() {
-        Tee<<"cw:"<<this->info.size()<<std::endl;
+        //Tee<<"cw:"<<this->info.size()<<std::endl;
         std::ofstream ofs(CountReward::path);
         ofs<<this->info.dump();
     }
 };
 void test_reward() {
-    CountReward cw;
-    // REP(i, 10000) {
-    //     cw.update(Key(i+1));
-    // }
-    // REP(i, 10000) {
-    //     cw.update(Key(i+1));
-    // }
-    // cw.dump();
-    //cw.load();
-    //Tee<<cw.get(Key(1));
-    Tee<<cw.size()<<std::endl;
-    cw.clean(1);
-    Tee<<cw.size()<<std::endl;
 }
 }
 

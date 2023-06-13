@@ -6,7 +6,6 @@
 from single_network import *
 from pathlib import Path
 from history_dataset import *
-from priority_dataset import *
 from torch.utils.data import DataLoader
 import numpy as np
 import pickle
@@ -17,8 +16,9 @@ import random
 import time
 
 # パラメータの準備
-RN_EPOCHS = 20 # 学習回数
-RN_BATCH_SIZE = 64 # バッチサイズ
+RN_EPOCHS = 32 # 学習回数
+RN_BATCH_SIZE = 128 # バッチサイズ
+LAMBDA = 0.7
 
 # 学習データの読み込み
 def load_data():
@@ -47,7 +47,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
     
     model.train()
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.00001)
-    dataset = PriorityDataset(path_list)
+    dataset = HistoryDataset(path_list)
     dataset_len = len(dataset)
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True) 
     start = time.time()
@@ -55,14 +55,15 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
         print(f"epoch:{i}")
         sum_loss = 0
         sum_num = 0 
-        for x, y in dataloader:
+        for x, y0, y1 in dataloader:
             x = x.float().to(device)
-            y = y.float().to(device)
+            y0 = y0.float().to(device)
+            y1 = y1.float().to(device)
                 
             optimizer.zero_grad()
             outputs = model(x)
             outputs = torch.squeeze(outputs)
-            loss = torch.sum((outputs - y) ** 2)
+            loss =  (LAMBDA * torch.sum((outputs - y0) ** 2)) + ((1 - LAMBDA) * torch.sum((outputs - y1) ** 2))
             loss.backward()
             optimizer.step()
             sum_loss += loss.item()

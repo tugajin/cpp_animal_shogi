@@ -20,7 +20,7 @@ class HistoryDataset(Dataset):
                     pass
         data2 = []
         for d in data:
-            data2.append([d["p"], d["s"]])
+            data2.append([d["p"], d["s"], d["r"]])
         self.data = data2
         print(f"len:{len(data)}")
     # ここで取り出すデータを指定している
@@ -31,7 +31,8 @@ class HistoryDataset(Dataset):
         feature = np.array(state.feature())
         feature = feature.reshape(channel, file, rank)
         y_deep = self.data[index][1]
-        return feature, y_deep
+        y_result = self.data[index][2]
+        return feature, y_deep, y_result
 
     # この method がないと DataLoader を呼び出す際にエラーを吐かれる
     def __len__(self):
