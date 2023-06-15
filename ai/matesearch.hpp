@@ -32,6 +32,21 @@ Move mate_search(const game::Position &pos, int ply) {
     return MOVE_NONE;
 }
 
+Move mated_search(const game::Position &pos, int ply) {
+    ASSERT(attack::in_checked(pos));
+    movelist::MoveList ml;
+    gen::evasion_moves(pos,ml);
+    const auto len = ml.len();
+    REP(i, len) {
+        const auto next = pos.next(ml[i]);
+        const auto result = mate_or(next, ply-1);
+        if (result == NOT_MATED) {
+            return ml[i];
+        }
+    }
+    return MOVE_NONE;
+}
+
 MateResult mate_and(const game::Position &pos, int ply) {
     if (ply < 0) {
         return NOT_MATED;

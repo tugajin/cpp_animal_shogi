@@ -5,6 +5,9 @@
 #include <torch/script.h>
 #include "util.hpp"
 #include "thread.hpp"
+#include "oracle.hpp"
+#include "hash.hpp"
+#include "game.hpp"
 
 namespace model {
 
@@ -98,6 +101,68 @@ void test_model() {
     feat_list.push_back(feat);
     predict(0, feat_list, output_list);
     Tee<<output_list[0]<<std::endl;
+}
+nn::NNScore predict_problem(const Key k) {
+    auto pos = hash::from_hash(k);
+    //Tee<<pos<<std::endl;
+    if (pos.is_win()) {
+        return nn::NNScore(0.99);
+    } else if (pos.is_lose()) {
+        return nn::NNScore(-0.99);
+    }
+    auto feat = nn::feature(pos);
+    std::vector<nn::Feature> feat_list;
+    std::vector<nn::NNScore> output_list;
+    feat_list.push_back(feat);
+    predict(0, feat_list, output_list);
+    return output_list[0];
+}
+void test_oracle_model() {
+    oracle::g_oracle.load();
+    auto correct = 0;
+    auto incorrect = 0;
+    // REP(i, oracle::OracleData::draw_size) {
+    //     const auto k = static_cast<Key>(oracle::g_oracle.draw(i));
+    //     const auto score = predict_problem(k);
+    //     //Tee<<score<<std::endl;
+    //     if (score > 0.2 || score < -0.2) {
+    //         incorrect++;
+    //     } else {
+    //         correct++;
+    //     }
+    //     Tee<<"correct:"<<correct<<" incorrect:"<<incorrect<<"\r";
+    // }
+    // Tee<<"correct:"<<correct<<" incorrect:"<<incorrect<<"\n";
+    // Tee<<"correct:"<<double(correct)/double(correct+incorrect)<<"\n";
+    
+    // REP(i, oracle::OracleData::lose_size) {
+    //     const auto k = static_cast<Key>(oracle::g_oracle.lose(i));
+    //     const auto score = predict_problem(k);
+    //     if (score > 0.0) {
+    //         incorrect++;
+    //     } else if (score < 0.0){
+    //         correct++;
+    //     }
+    //     if(i % 1000 == 0)
+    //         Tee<<"correct:"<<double(correct)/double(correct+incorrect)<<" correct:"<<correct<<" incorrect:"<<incorrect<<"\r";
+    // }
+    
+    Tee<<"correct:"<<correct<<" incorrect:"<<incorrect<<"\n";
+    Tee<<"correct:"<<double(correct)/double(correct+incorrect)<<"\n";
+    
+    REP(i, oracle::OracleData::win_size) {
+        const auto k = static_cast<Key>(oracle::g_oracle.win(i));
+        const auto score = predict_problem(k);
+        if (score < 0.0) {
+            incorrect++;
+        } else if (score >0.0){
+            correct++;
+        }
+        if(i % 1000 == 0)
+            Tee<<"correct:"<<double(correct)/double(correct+incorrect)<<" correct:"<<correct<<" incorrect:"<<incorrect<<"\r";
+    }
+    Tee<<"correct:"<<correct<<" incorrect:"<<incorrect<<"\n";
+    Tee<<"correct:"<<double(correct)/double(correct+incorrect)<<"\n";
 }
 
 }

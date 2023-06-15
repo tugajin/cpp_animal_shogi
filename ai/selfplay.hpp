@@ -17,6 +17,8 @@
 #include "oracle.hpp"
 #include "reviewbuffer.hpp"
 
+#define DEBUG_OUT 0
+
 namespace selfplay {
 
 using json = nlohmann::json;
@@ -52,11 +54,16 @@ private:
     json info;
     std::ofstream ofs;
 };
+
 class DescentSearcherLocal ;
 
 class SelfPlayWorker : public ubfm::UBFMSearcherGlobal {
 public:
+#if DEBUG_OUT
+    static constexpr int NUM = 1;
+#else
     static constexpr int NUM = 4;
+#endif
     void run_descent(const int selfplay_num);
     void join();
     void init();
@@ -82,11 +89,56 @@ private:
     int po_num = 100;
 };
 
+class SelfPlayInfo {
+private:
+    int num[SelfPlayWorker::NUM];
+    int win_num;
+    int lose_num;
+    int draw_num;
+    uint64 sum_ply;
+    Lockable lock;
+public:
+    void init() {
+        REP(i, SelfPlayWorker::NUM) {
+            num[i] = 0;
+        }
+        win_num = lose_num = draw_num = 0;
+    }
+    void inc(const int result, const int thread_id, const int ply) {
+        lock.lock();
+        num[thread_id]++;
+        sum_ply += ply;
+        switch(result) {
+            case 0:
+                draw_num++;
+                break;
+            case 1:
+                win_num++;
+                break;
+            case -1:
+                lose_num++;
+                break;
+        }
+        lock.unlock();
+    }
+    std::string str() {
+        const auto sum = win_num + lose_num + draw_num;
+        std::string ret = "------------selfplay info------------\n";
+        ret += "win:" + to_string(win_num) + " lose:" + to_string(lose_num) + " draw:" + to_string(draw_num) + " avg_ply:" + to_string(double(sum_ply)/sum) +"\n";
+        REP(i, SelfPlayWorker::NUM) {
+            ret += "thread" + to_string(i) + ":" + to_string(num[i]) + "\n";
+        }
+        return ret;
+    }
+};
+
 extern SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
 extern int g_thread_counter;
+extern SelfPlayInfo g_selfplay_info;
 
 void execute_selfplay(const int num) {
     g_thread_counter = 0;
+    g_selfplay_info.init();
     REP(i, SelfPlayWorker::NUM) {
         selfplay::g_selfplay_worker[i].init();
     }
@@ -123,7 +175,9 @@ void DescentSearcherLocal::run_descent(const int selfplay_num) {
 }
 void DescentSearcherLocal::search_descent(const uint32 simulation_num) {
     for(auto i = 0u ;; ++i) {
-        //Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
+#if DEBUG_OUT
+        Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
+#endif
         const auto interrupt = this->interrupt_descent(i, simulation_num);
         if (interrupt) {
             break;
@@ -141,45 +195,29 @@ void DescentSearcherLocal::evaluate_descent(ubfm::Node *node) {
         Tee<<node->pos<<std::endl;
     })
     ASSERT(std::fabs(node->w) <= 1);
-    ASSERT2(node->is_ok(),{
-        Tee<<node->str()<<std::endl;
-    });
+    // ASSERT2(node->is_ok(),{
+    //     Tee<<node->str()<<std::endl;
+    // });
     
     if (node->pos.is_draw()) {
         node->w = nn::NNScore(0.0);
         node->state = ubfm::NodeState::NodeDraw;
         return;
     } 
-    // if (node->pos.ply() == 0)
-    //     Tee << "draw:" << timer.elapsed()<<std::endl;
     if (node->pos.is_lose()) {
         node->w = ubfm::score_lose(node->ply);
         node->state = ubfm::NodeState::NodeLose;
         return;
     }
-    // if (node->pos.ply() == 0)
-    //     Tee << "lose:" << timer.elapsed()<<std::endl;
     if (node->is_terminal()) {
         this->expand(node);
-        // if (node->pos.ply() == 0)
-        //     Tee << "expand:" << timer.elapsed()<<std::endl;
         this->predict(node);
-        // if (node->pos.ply() == 0)
-        //     Tee << "predict:" << timer.elapsed()<<std::endl;
     } else {
-        // if (node->pos.ply() == 0)
-        //     Tee << "is_resolved:" << timer.elapsed()<<std::endl;
         auto next_node = this->next_child<true>(node);
-        // if (node->pos.ply() == 0)
-        //     Tee << "next_child:" << timer.elapsed()<<std::endl;
         ASSERT2(next_node != nullptr,{
             Tee<<node->str()<<std::endl;
         })
         this->evaluate_descent(next_node);
-        // if (node->pos.ply() == 0)
-        //     Tee << "evaluate_descent:" << timer.elapsed()<<std::endl;
-        // if (node->pos.ply() == 0)
-        //     Tee << "update_node:" << timer.elapsed()<<std::endl;
     }
     this->update_node(node);
 }
@@ -290,11 +328,13 @@ void DescentSearcherLocal::choice_best_move_count() {
         } else {
             scores[i] = /*child->n + 1.0 */- child->w + reward;
         }
-        // Tee<<"n:"<<padding_str(to_string(child->n),3) 
-        //     << " w:" << padding_str(to_string(-child->w),7) 
-        //     << " oracle:" << padding_str(to_string(oracle),2) 
-        //     << " org:" << padding_str(to_string(num[i]),3)<<" "
-        //     <<move_str(child->parent_move)<<std::endl;
+#if DEBUG_OUT
+        Tee<<"n:"<<padding_str(to_string(child->n),3) 
+            << " w:" << padding_str(to_string(-child->w),7) 
+          //  << " oracle:" << padding_str(to_string(oracle),2) 
+            << " org:" << padding_str(to_string(num[i]),3)<<" "
+            <<move_str(child->parent_move)<<std::endl;
+#endif
     }
     auto index = -1;
     auto iter = std::max_element(scores.begin(), scores.end());
@@ -310,28 +350,28 @@ void DescentSearcherLocal::choice_best_move_count() {
 void DescentSearcherLocal::selfplay(const int selplay_num) {
     REP(i, selplay_num) {
         game::Position pos;
-        auto base_po = 10u;
         pos = hash::hirate();
         this->replay_buffer.open();
         while(true) {
-            //Tee<<"自己対局("<<this->thread_id<<")："<<i<<":"<<pos.ply()<<std::endl;
-            //Tee<<pos<<std::endl;
-            
+#if DEBUG_OUT
+            Tee<<"自己対局("<<this->thread_id<<")："<<i<<":"<<pos.ply()<<std::endl;
+            Tee<<pos<<std::endl;
+#endif
             this->global->clear_tree();
 
             if (pos.is_lose() || pos.is_draw(4)) {
                 auto result = 0.0;
                 if (pos.is_draw(4)) {
                     result = 0.0;
-                    Tee<<"=("<<this->thread_id<<")";
+                    g_selfplay_info.inc(0,this->thread_id,pos.ply());
                 }
                 if (pos.is_lose()) {
                     if (pos.turn() == BLACK) {
                         result = -1.0;
-                        Tee<<"x("<<this->thread_id<<")";
+                        g_selfplay_info.inc(-1,this->thread_id,pos.ply());
                     } else {
                         result = 1.0;
-                        Tee<<"o("<<this->thread_id<<")";
+                        g_selfplay_info.inc(1,this->thread_id,pos.ply());
                     }
                 }
                 this->replay_buffer.overwrite_result(result);
@@ -344,17 +384,19 @@ void DescentSearcherLocal::selfplay(const int selplay_num) {
             auto best_move = execute_descent(pos);
             
             this->cw.update(pos.history());
-            if (!attack::in_checked(pos)) {
-                const auto mate_move = mate::mate_search(pos,5);
-                if (mate_move != MOVE_NONE) {
-                    best_move = mate_move;
-                }
-            } 
+            // if (!attack::in_checked(pos)) {
+            //     const auto mate_move = mate::mate_search(pos,5);
+            //     if (mate_move != MOVE_NONE) {
+            //         best_move = mate_move;
+            //     }
+            // } 
             pos = pos.next(best_move);
         }
         if (i % 10 == 0) {
-            //Tee<<"\n";
-            cw.dump();
+            this->cw.dump();
+        }
+        if (this->thread_id == 0 && i % 10 == 0) {
+            Tee<<g_selfplay_info.str();
         }
     }
 }

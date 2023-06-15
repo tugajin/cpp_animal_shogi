@@ -433,6 +433,18 @@ void UBFMSearcherLocal::predict(Node *node) {
         } else if (pos.is_win()) {
             score = score_win(child->ply);
             state = NodeWin;
+        } else if (!attack::in_checked(pos)) {
+            const auto move = mate::mate_search(pos,5);
+            if (move != MOVE_NONE) {
+                score = score_win(child->ply);
+                state = NodeWin;
+            }
+        } else {
+            const auto move = mate::mated_search(pos,4);
+            if (move == MOVE_NONE) {
+                score = score_lose(child->ply);
+                state = NodeLose;
+            }
         }
         ASSERT2(std::fabs(score)<=1,{
             Tee<<child->ply<<std::endl;

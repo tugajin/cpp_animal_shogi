@@ -29,6 +29,7 @@ UBFMSearcherGlobal g_searcher_global;
 namespace selfplay {
 SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
 int g_thread_counter;
+SelfPlayInfo g_selfplay_info;
 }
 namespace oracle {
 OracleData g_oracle;
@@ -48,6 +49,7 @@ int main(int argc, char **argv){
     init_table();
     //oracle::g_oracle.load();
     model::g_gpu_model[0].load_model(0);
+    //model::test_oracle_model();
     selfplay::execute_selfplay(num);
     //review::test_review();
     //model::test_model();

@@ -12,10 +12,6 @@ private:
     std::vector<uint64> win_data;
     std::vector<uint64> lose_data;
     std::vector<uint64> draw_data;
-
-    static constexpr int win_size = 196773087;
-    static constexpr int lose_size = 47347380;
-    static constexpr int draw_size = 2682700;
     int result(const uint64 index) const {
         if (std::binary_search(win_data.begin(), win_data.end(),index)) {
             return 1;
@@ -30,6 +26,9 @@ private:
         return 99;
     }
 public:
+    static constexpr int win_size = 196773087;
+    static constexpr int lose_size = 47347380;
+    static constexpr int draw_size = 2682700;
     OracleData() {
         
     }
@@ -48,6 +47,15 @@ public:
         ifs_draw.close();
     }
     int result(const game::Position &pos)const;
+    uint64 win(const int index) const {
+        return win_data[index];
+    }
+    uint64 lose(const int index) const {
+        return lose_data[index];
+    }
+    uint64 draw(const int index) {
+        return draw_data[index];
+    }
 };
 int OracleData::result(const game::Position &pos) const {
     if (pos.turn() == BLACK) {
