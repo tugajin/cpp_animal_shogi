@@ -5,7 +5,7 @@
 # パッケージのインポート
 from single_network import *
 from pathlib import Path
-from history_dataset import *
+from oracle_dataset import *
 from torch.utils.data import DataLoader
 import numpy as np
 import pickle
@@ -17,28 +17,12 @@ import time
 
 # パラメータの準備
 RN_EPOCHS = 32 # 学習回数
-RN_BATCH_SIZE = 128 # バッチサイズ
+RN_BATCH_SIZE = 512 # バッチサイズ
 LAMBDA = 0.7
 
-# 学習データの読み込み
-def load_data():
-    history_path = sorted(Path('./data').glob('*.history4'))[-1]
-    with history_path.open(mode='rb') as f:
-        return pickle.load(f)
-# 学習データの読み込み
-def load_all_data():
-    history_path = sorted(Path('./data').glob('*.history4'))
-    ret = []
-    for path in history_path:
-        with path.open(mode='rb') as f:
-            tmp = pickle.load(f)
-            ret.extend(tmp)
-    return ret
 # ネットワークの学習
-def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None):
+def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE):
 
-    if path_list is None:
-        path_list = Path('./data').glob('*.json')
     # ベストプレイヤーのモデルの読み込み
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = SingleNet()
@@ -47,7 +31,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
     
     model.train()
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.00001)
-    dataset = HistoryDataset(path_list)
+    dataset = OracleDataset()
     dataset_len = len(dataset)
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True) 
     start = time.time()
@@ -55,15 +39,14 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
         print(f"epoch:{i}")
         sum_loss = 0
         sum_num = 0 
-        for x, y0, y1 in dataloader:
+        for x, y in dataloader:
             x = x.float().to(device)
-            y0 = y0.float().to(device)
-            y1 = y1.float().to(device)
+            y = y.float().to(device)
                 
             optimizer.zero_grad()
             outputs = model(x)
             outputs = torch.squeeze(outputs)
-            loss =  (LAMBDA * torch.sum((outputs - y0) ** 2)) + ((1 - LAMBDA) * torch.sum((outputs - y1) ** 2))
+            loss =  torch.sum((outputs - y) ** 2)
             loss.backward()
             optimizer.step()
             sum_loss += loss.item()
