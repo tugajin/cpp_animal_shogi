@@ -125,9 +125,9 @@ public:
         const auto sum = win_num + lose_num + draw_num;
         std::string ret = "------------selfplay info------------\n";
         ret += "win:" + to_string(win_num) + " lose:" + to_string(lose_num) + " draw:" + to_string(draw_num) + " avg_ply:" + to_string(double(sum_ply)/sum) +"\n";
-        REP(i, SelfPlayWorker::NUM) {
-            ret += "thread" + to_string(i) + ":" + to_string(num[i]) + "\n";
-        }
+        // REP(i, SelfPlayWorker::NUM) {
+        //     ret += "thread" + to_string(i) + ":" + to_string(num[i]) + "\n";
+        // }
         return ret;
     }
 };
@@ -395,7 +395,7 @@ void DescentSearcherLocal::selfplay(const int selplay_num) {
         if (i % 10 == 0) {
             this->cw.dump();
         }
-        if (this->thread_id == 0 && i % 10 == 0) {
+        if (this->thread_id == 0 && i % 100 == 0) {
             Tee<<g_selfplay_info.str();
         }
     }

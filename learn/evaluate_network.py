@@ -8,10 +8,13 @@ from pathlib import Path
 from shutil import copy
 import numpy as np
 from single_network import *
+import datetime
 
 # ベストプレイヤーの交代
 def update_best_player():
+    dt_now = datetime.datetime.now()
     copy('./model/latest_single.h5', './model/best_single.h5')
+    copy('./model/latest_single.h5', f'./model/best_single_{dt_now.isoformat()}.h5')
     print('Change BestPlayer')
 
 def predict(model, state, device):

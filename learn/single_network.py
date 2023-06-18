@@ -80,6 +80,13 @@ def print_network():
    
     model = SingleNet()
     model.load_state_dict(torch.load('./model/best_single.h5'))
+    
+    params = 0
+    for p in model.parameters():
+        if p.requires_grad:
+            params += p.numel()
+    print(f"パラメータ数 : {params:,}")
+    
     model = model.to(device)
     model.eval()
     state = State()
@@ -110,4 +117,4 @@ def conv_jit():
 if __name__ == '__main__':
     single_network()
     print_network()
-    conv_jit()
+    #conv_jit()
