@@ -5,6 +5,7 @@ import torch.jit
 import torch.nn as nn
 import torch.nn.functional as F
 from game import *
+import numpy as np
 
 class Attention(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
@@ -103,7 +104,7 @@ class TransformerModel(nn.Module):
         input_channel_num = 42
         channel_num = 128
         nhead = 4
-        block_num = 3
+        block_num = 8
         square_num = 12
         self.first_encoding_ = torch.nn.Linear(input_channel_num, channel_num)
         self.encoder_ = nn.Sequential(*[Block(dim=channel_num, num_heads=nhead) for _ in range(block_num)])
@@ -113,6 +114,7 @@ class TransformerModel(nn.Module):
 
     def forward(self, x):
         batch_size = x.shape[0]
+        x = x.view([batch_size, 42, 12])
         x = x.permute([2, 0, 1])
         x = self.first_encoding_(x)
         x = x + self.positional_encoding_
@@ -124,28 +126,30 @@ class TransformerModel(nn.Module):
         value = self.value_head_.forward(x)
         return value
 
-
 def main():
 
     model = TransformerModel()
-
+    model.eval()
     params = 0
     for p in model.parameters():
         if p.requires_grad:
             params += p.numel()
     print(f"パラメータ数 : {params:,}")
 
-    state = State()
-    input_data = torch.Tensor([state.feature() for i in range(10)])
-    print(input_data.shape)
-    script_model = torch.jit.trace(model, input_data)
+    torch.save(model.state_dict(), './model/best_single.h5')
     script_model = torch.jit.script(model)
-    model_path = f"./shogi_transformer.ts"
+    model_path = "./model/best_single_jit.pt"
     script_model.save(model_path)
-    print(f"{model_path}にパラメータを保存")
-    out = script_model(input_data)
-    print(out.shape)
 
+    state = State()
+    f = np.array(state.feature())
+    print(type(f))
+    f = f.reshape(42,3,4)
+    input_data = torch.Tensor([f for i in range(10)])
+    print(input_data.shape)
+    loaded_model = torch.jit.load(model_path)
+    out = loaded_model(input_data)
+    print(out.shape)
 
 if __name__ == "__main__":
     main()
