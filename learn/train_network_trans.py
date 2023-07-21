@@ -3,7 +3,7 @@
 # ====================
 
 # パッケージのインポート
-from generate_transformer_model import *
+from generate_poolformer_model import *
 from pathlib import Path
 from history_dataset import *
 from torch.utils.data import DataLoader
@@ -41,7 +41,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
         path_list = Path('./data').glob('*.json')
     # ベストプレイヤーのモデルの読み込み
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = TransformerModel()
+    model = PoolformerModel()
     model.load_state_dict(torch.load('./model/best_single.h5',device))
     model = model.to(device)
     

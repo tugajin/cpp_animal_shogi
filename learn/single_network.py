@@ -66,8 +66,8 @@ class SingleNet(nn.Module):
 # デュアルネットワークの作成
 def single_network():
     # モデル作成済みの場合は無処理
-    if os.path.exists('./model/best_single.h5'):
-        return
+    #if os.path.exists('./model/best_single.h5'):
+    #    return
     
     model = SingleNet()
 

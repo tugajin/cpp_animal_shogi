@@ -16,6 +16,7 @@
 #include "countreward.hpp"
 #include "oracle.hpp"
 #include "reviewbuffer.hpp"
+#include "search.hpp"
 
 #define DEBUG_OUT 0
 
@@ -124,10 +125,17 @@ public:
     std::string str() {
         const auto sum = win_num + lose_num + draw_num;
         std::string ret = "------------selfplay info------------\n";
-        ret += "win:" + to_string(win_num) + " lose:" + to_string(lose_num) + " draw:" + to_string(draw_num) + " avg_ply:" + to_string(double(sum_ply)/sum) +"\n";
-        // REP(i, SelfPlayWorker::NUM) {
-        //     ret += "thread" + to_string(i) + ":" + to_string(num[i]) + "\n";
-        // }
+        double rate = (double(win_num) + (double(draw_num)/2)) / (double(win_num) + double(lose_num) + double(draw_num));
+        ret += "win:" + to_string(win_num) 
+            + " lose:" + to_string(lose_num) 
+            + " draw:" + to_string(draw_num) 
+            + " sum:" + to_string(sum)
+            + " rate:" + to_string(rate) 
+            + " avg_ply:" + to_string(double(sum_ply)/sum); 
+        REP(i, SelfPlayWorker::NUM) {
+            ret += ":" + to_string(num[i]);
+        }
+        ret += "\n";
         return ret;
     }
 };
@@ -347,7 +355,17 @@ void DescentSearcherLocal::choice_best_move_count() {
     this->root_node()->w = -child->w;
 }
 
+nn::NNScore int_to_nn(const int sc) {
+    if (sc >= (search::SEARCH_MATE - 100)) {
+        return nn::NNScore(1);
+    } else if (sc <= -(search::SEARCH_MATE - 100)) {
+        return nn::NNScore(-1);
+    }
+    return std::tanh(static_cast<double>(sc)/1000.0);
+}
+
 void DescentSearcherLocal::selfplay(const int selplay_num) {
+    Tee<<"start selfplay:"<<selplay_num<<std::endl;
     REP(i, selplay_num) {
         game::Position pos;
         pos = hash::hirate();
@@ -379,11 +397,19 @@ void DescentSearcherLocal::selfplay(const int selplay_num) {
                 this->replay_buffer.close();
                 break;
             }
+#if 1
             this->po_num = 50;
             
             auto best_move = execute_descent(pos);
-            
+           
             this->cw.update(pos.history());
+#else
+            auto sc = search::SEARCH_MIN;
+            auto best_move = search::search_root(pos, 5, sc);
+            const auto k = hash::hash_key(pos);
+            const auto w = int_to_nn(sc);
+            this->replay_buffer.push_back(k,w);
+#endif
             // if (!attack::in_checked(pos)) {
             //     const auto mate_move = mate::mate_search(pos,5);
             //     if (mate_move != MOVE_NONE) {
@@ -395,7 +421,7 @@ void DescentSearcherLocal::selfplay(const int selplay_num) {
         if (i % 10 == 0) {
             this->cw.dump();
         }
-        if (this->thread_id == 0 && i % 100 == 0) {
+        if (this->thread_id == 0 && i % 10 == 0) {
             Tee<<g_selfplay_info.str();
         }
     }

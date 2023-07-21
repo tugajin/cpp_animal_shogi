@@ -7,69 +7,6 @@ import torch.nn.functional as F
 from game import *
 import numpy as np
 
-class Attention(nn.Module):
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim ** -0.5
-
-        self.head_dim = head_dim
-        self.q = nn.Linear(dim, dim, bias=qkv_bias)
-        self.k = nn.Linear(dim, dim, bias=qkv_bias)
-        self.v = nn.Linear(dim, dim, bias=qkv_bias)
-        self.proj = nn.Linear(dim, dim)
-
-    def forward(self, x):
-        B, N, C = x.shape
-
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).permute([0, 2, 1, 3])
-        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).permute([0, 2, 1, 3])
-        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).permute([0, 2, 1, 3])
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        return x
-
-class MLP(nn.Module):
-    def __init__(self, dim, hidden_dim):
-        """ [input]
-            - dim (int) : パッチのベクトルが変換されたベクトルの長さ
-            - hidden_dim (int) : 隠れ層のノード数
-        """
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, dim)
-        )
-
-    def forward(self, x):
-        """[input]
-            - x (torch.Tensor)
-                - x.shape = torch.Size([batch_size, n_patches + 1, dim])
-        """
-        x = self.net(x)
-        return x
-
-class Block(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
-        super().__init__()
-        self.norm1 = norm_layer(dim, elementwise_affine=False)
-        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
-        self.norm2 = norm_layer(dim, elementwise_affine=False)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = MLP(dim, mlp_hidden_dim)
-
-    def forward(self, x):
-        x = x + self.attn(self.norm1(x))
-        x = x + self.mlp(self.norm2(x))
-        return x
-
 class Conv2DwithBatchNorm(nn.Module):
     def __init__(self, input_ch, output_ch, kernel_size):
         super(Conv2DwithBatchNorm, self).__init__()
@@ -96,19 +33,20 @@ class ValueHead(nn.Module):
         value = self.value_linear0_.forward(value)
         value = F.relu(value)
         value = self.value_linear1_.forward(value)
+        value = torch.tanh(value)
         return value
 
 class TransformerModel(nn.Module):
     def __init__(self):
         super(TransformerModel, self).__init__()
         input_channel_num = 42
-        channel_num = 128
-        nhead = 4
-        block_num = 8
+        channel_num = 256
         square_num = 12
-        self.first_encoding_ = torch.nn.Linear(input_channel_num, channel_num)
-        self.encoder_ = nn.Sequential(*[Block(dim=channel_num, num_heads=nhead) for _ in range(block_num)])
+        layer_num = 5
         self.channel_num = channel_num
+        self.first_encoding_ = torch.nn.Linear(input_channel_num, channel_num)
+        encoder_layer = torch.nn.TransformerEncoderLayer(channel_num, nhead=8,dim_feedforward=channel_num*4)
+        self.encoder_ = torch.nn.TransformerEncoder(encoder_layer,layer_num)
         self.value_head_ = ValueHead(channel_num, 1)
         self.positional_encoding_ = torch.nn.Parameter(torch.zeros([square_num, 1, channel_num]), requires_grad=True)
 
@@ -117,14 +55,20 @@ class TransformerModel(nn.Module):
         x = x.view([batch_size, 42, 12])
         x = x.permute([2, 0, 1])
         x = self.first_encoding_(x)
+        x = F.relu(x)
         x = x + self.positional_encoding_
-
         x = self.encoder_(x)
         x = x.permute([1, 2, 0])
         x = x.view([batch_size, self.channel_num, 3, 4])
-
         value = self.value_head_.forward(x)
         return value
+
+def conv_jit():
+    model = TransformerModel()
+    model.load_state_dict(torch.load('./model/best_single.h5'))
+    model.eval()
+    sm = torch.jit.script(model)
+    sm.save("./model/best_single_jit.pt")
 
 def main():
 
@@ -137,19 +81,18 @@ def main():
     print(f"パラメータ数 : {params:,}")
 
     torch.save(model.state_dict(), './model/best_single.h5')
-    script_model = torch.jit.script(model)
-    model_path = "./model/best_single_jit.pt"
-    script_model.save(model_path)
-
+    conv_jit()
+    
     state = State()
     f = np.array(state.feature())
     print(type(f))
     f = f.reshape(42,3,4)
     input_data = torch.Tensor([f for i in range(10)])
     print(input_data.shape)
-    loaded_model = torch.jit.load(model_path)
+    loaded_model = torch.jit.load('./model/best_single_jit.pt')
     out = loaded_model(input_data)
     print(out.shape)
+    print(out)
 
 if __name__ == "__main__":
     main()

@@ -5,7 +5,7 @@
 # パッケージのインポート
 from pathlib import Path
 from train_network_trans import train_network
-from evaluate_network import *
+from evaluate_network_trans import *
 import multiprocessing as mp
 import sys
 import torch
