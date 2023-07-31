@@ -65,7 +65,7 @@ public:
 #else
     static constexpr int NUM = 4;
 #endif
-    void run_descent(const int selfplay_num);
+    void run_descent();
     void join();
     void init();
 private:
@@ -77,9 +77,9 @@ public:
     DescentSearcherLocal(const int id, const int gpu_id, SelfPlayWorker * selfplay) :
     ubfm::UBFMSearcherLocal(id, gpu_id, selfplay),cw(reward::CountReward(id)) {
     }
-    void run_descent(const int selfplay_num);
+    void run_descent();
     void search_descent(const uint32 simulation_num);
-    void selfplay(const int selplay_num);
+    void selfplay();
     ReplayBuffer replay_buffer;
     reward::CountReward cw;
 private:
@@ -92,22 +92,21 @@ private:
 
 class SelfPlayInfo {
 private:
-    int num[SelfPlayWorker::NUM];
+    int num;
     int win_num;
     int lose_num;
     int draw_num;
     uint64 sum_ply;
+    int num_limit;
     Lockable lock;
 public:
     void init() {
-        REP(i, SelfPlayWorker::NUM) {
-            num[i] = 0;
-        }
         win_num = lose_num = draw_num = 0;
+        num = num_limit = 0;
     }
-    void inc(const int result, const int thread_id, const int ply) {
+    void inc(const int result, const int ply) {
         lock.lock();
-        num[thread_id]++;
+        num++;
         sum_ply += ply;
         switch(result) {
             case 0:
@@ -132,11 +131,14 @@ public:
             + " sum:" + to_string(sum)
             + " rate:" + to_string(rate) 
             + " avg_ply:" + to_string(double(sum_ply)/sum); 
-        REP(i, SelfPlayWorker::NUM) {
-            ret += ":" + to_string(num[i]);
-        }
         ret += "\n";
         return ret;
+    }
+    void set_limit(const int n) {
+        num_limit = n;
+    }
+    bool is_end() const {
+        return num >= num_limit;
     }
 };
 
@@ -147,15 +149,17 @@ extern SelfPlayInfo g_selfplay_info;
 void execute_selfplay(const int num) {
     g_thread_counter = 0;
     g_selfplay_info.init();
+    g_selfplay_info.set_limit(num);
     REP(i, SelfPlayWorker::NUM) {
         selfplay::g_selfplay_worker[i].init();
     }
     REP(i, SelfPlayWorker::NUM) {
-        selfplay::g_selfplay_worker[i].run_descent(num);
+        selfplay::g_selfplay_worker[i].run_descent();
     }
     REP(i, SelfPlayWorker::NUM) {
         selfplay::g_selfplay_worker[i].join();
     }
+    Tee<<g_selfplay_info.str();
 }
 
 void SelfPlayWorker::init() {
@@ -166,9 +170,9 @@ void SelfPlayWorker::init() {
     g_thread_counter++;
 }
 
-void SelfPlayWorker::run_descent(const int selfplay_num) {
+void SelfPlayWorker::run_descent() {
     ASSERT(this->worker.size() > 0);
-    this->worker[0].run_descent(selfplay_num);
+    this->worker[0].run_descent();
 }
 
 void SelfPlayWorker::join() {
@@ -176,9 +180,9 @@ void SelfPlayWorker::join() {
     this->worker[0].join();
 }
 
-void DescentSearcherLocal::run_descent(const int selfplay_num) {
-    this->thread = new std::thread([this, selfplay_num]() {
-        this->selfplay(selfplay_num);
+void DescentSearcherLocal::run_descent() {
+    this->thread = new std::thread([this]() {
+        this->selfplay();
     });
 }
 void DescentSearcherLocal::search_descent(const uint32 simulation_num) {
@@ -364,9 +368,9 @@ nn::NNScore int_to_nn(const int sc) {
     return std::tanh(static_cast<double>(sc)/1000.0);
 }
 
-void DescentSearcherLocal::selfplay(const int selplay_num) {
-    Tee<<"start selfplay:"<<selplay_num<<std::endl;
-    REP(i, selplay_num) {
+void DescentSearcherLocal::selfplay() {
+    Tee<<"start selfplay\n";
+    for(auto i = 0; !g_selfplay_info.is_end() ; i++) {
         game::Position pos;
         pos = hash::hirate();
         this->replay_buffer.open();
@@ -381,15 +385,15 @@ void DescentSearcherLocal::selfplay(const int selplay_num) {
                 auto result = 0.0;
                 if (pos.is_draw(4)) {
                     result = 0.0;
-                    g_selfplay_info.inc(0,this->thread_id,pos.ply());
+                    g_selfplay_info.inc(0,pos.ply());
                 }
                 if (pos.is_lose()) {
                     if (pos.turn() == BLACK) {
                         result = -1.0;
-                        g_selfplay_info.inc(-1,this->thread_id,pos.ply());
+                        g_selfplay_info.inc(-1,pos.ply());
                     } else {
                         result = 1.0;
-                        g_selfplay_info.inc(1,this->thread_id,pos.ply());
+                        g_selfplay_info.inc(1,pos.ply());
                     }
                 }
                 this->replay_buffer.overwrite_result(result);
