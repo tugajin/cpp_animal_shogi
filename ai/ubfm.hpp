@@ -333,10 +333,6 @@ void UBFMSearcherLocal::search(const uint32 simulation_num) {
 }
 
 void UBFMSearcherLocal::evaluate(Node *node) {
-    // if (node == nullptr) {
-    //     Tee<<"???????"<<this->thread_id<<std::endl;
-    //     return;
-    // }
     ASSERT(node != nullptr);
     ASSERT(std::fabs(node->w) <= 1);
     node->lock_node.lock();
@@ -392,11 +388,8 @@ void UBFMSearcherLocal::predict(Node *node) {
     ASSERT2(node->child_len > 0,{
         Tee<<node->pos<<std::endl;
     });
-    // Timer timer;
-    // timer.start();
     std::vector<nn::Feature> feat_list;
     std::vector<nn::NNScore> outputs_list;
-    //Tee<<"  init:"<<timer.elapsed()<<std::endl;
     REP(i, node->child_len) {
         ASSERT(i>=0);
         ASSERT(i<node->child_len);
@@ -404,12 +397,8 @@ void UBFMSearcherLocal::predict(Node *node) {
         auto &pos = child->pos;
         feat_list.push_back(nn::feature(pos));
     }
-    //Tee<<"  push_back:"<<timer.elapsed()<<std::endl;
-
     model::predict(this->gpu_id, feat_list, outputs_list);
     
-    //Tee<<"  predict:"<<timer.elapsed()<<std::endl;
-
     REP(i, node->child_len) {
         auto state = NodeUnknown;
         auto score = outputs_list[i];

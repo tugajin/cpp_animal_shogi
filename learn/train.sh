@@ -1,6 +1,9 @@
 #!/bin/sh
-while true
+
+for i in `seq 0 60`
 do
-	./cpp_animal_shogi 18000 || exit 1
-	python3 train_worker.py || exit 1
+    ./cpp_animal_shogi 5000
+    python3 line.py
+    python3 train.py $i
+    rm -rf data/selfplay*.json
 done

@@ -21,7 +21,6 @@ class HistoryDataset(Dataset):
         data2 = []
         for d in data:
             data2.append([d["p"], d["s"], d["r"]])
-        #data2 = data2[0:100]
         self.data = data2
         print(f"len:{len(data)}")
     # ここで取り出すデータを指定している

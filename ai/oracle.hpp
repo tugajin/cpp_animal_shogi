@@ -4,6 +4,7 @@
 #include "hash.hpp"
 #include <vector>
 #include <algorithm>
+#include <random>
 
 
 namespace oracle {
@@ -56,6 +57,7 @@ public:
     uint64 draw(const int index) {
         return draw_data[index];
     }
+    void select_random();
 };
 int OracleData::result(const game::Position &pos) const {
     if (pos.turn() == BLACK) {
@@ -77,6 +79,54 @@ int OracleData::result(const game::Position &pos) const {
         if (result != 99) { return result; }
     }
     return 99;
+}
+void OracleData::select_random() {
+    // シャッフル
+    {
+        std::random_device seed_gen;
+        std::mt19937 engine(seed_gen());
+        std::shuffle(win_data.begin(), win_data.end(), engine);
+    }
+    {
+        std::random_device seed_gen;
+        std::mt19937 engine(seed_gen());
+        std::shuffle(lose_data.begin(), lose_data.end(), engine);
+    }
+    {
+        std::random_device seed_gen;
+        std::mt19937 engine(seed_gen());
+        std::shuffle(draw_data.begin(), draw_data.end(), engine);
+    }
+    std::ofstream outputFile("problem.txt");
+    {
+        const auto size = win_data.size();
+        auto num = 0u;
+        for(auto i = 0; i < size; i++) {
+            auto pos = hash::from_hash(Key(win_data[i]));
+            if (!pos.is_win() && !pos.is_lose() && !pos.is_draw()) {
+                outputFile << win_data[i] << ",1\n";
+                num++;
+                if (num > 5000) {
+                    break;
+                }
+            }
+        }
+    }
+    {
+        const auto size = lose_data.size();
+        auto num = 0u;
+        for(auto i = 0; i < size; i++) {
+            auto pos = hash::from_hash(Key(lose_data[i]));
+            if (!pos.is_win() && !pos.is_lose() && !pos.is_draw()) {
+                outputFile << lose_data[i] << ",-1\n";
+                num++;
+                if (num > 5000) {
+                    break;
+                }
+            }
+        }
+    }
+    outputFile.close();
 }
 extern OracleData g_oracle;
 }

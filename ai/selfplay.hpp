@@ -19,6 +19,7 @@
 #include "search.hpp"
 
 #define DEBUG_OUT 0
+static constexpr bool USE_DESCENT = false;
 
 namespace selfplay {
 
@@ -32,7 +33,7 @@ public:
     void open() {
         this->info.clear();
         std::filesystem::create_directory("data");
-        auto filename = "./data/" + timestamp() + "_" + to_string(my_rand(9999)) + ".json";
+        auto filename = "./data/selfplay_" + timestamp() + "_" + to_string(my_rand(9999)) + ".json";
         this->ofs.open(filename);
     }
     void close() {
@@ -43,6 +44,7 @@ public:
         info.push_back({{"p", hash},{"s", sc},{"r", -99}});
     }
     void overwrite_result(double result) {
+        if (USE_DESCENT) { return; }
         for(auto &item :this->info) {
             item["r"] = result;
             result *= -1;
@@ -84,9 +86,18 @@ public:
     reward::CountReward cw;
 private:
     void evaluate_descent(ubfm::Node *node);
+    void evaluate(ubfm::Node *node);
     Move execute_descent(game::Position &pos);
     bool interrupt_descent(const uint32 current_num, const uint32 simulation_num) const;
+    void add_replay_buffer(ubfm::Node *node);
+    void choice_best_move_e_greedy();
     void choice_best_move_count();
+    void choice_best_move_ordinal();
+    void choice_best_move_diff();
+    void choice_best_move_softmax();
+    void choice_best_move_random();
+    void choice_best_move_greedy();
+    void choice_best_move_dropout();
     int po_num = 100;
 };
 
@@ -121,16 +132,25 @@ public:
         }
         lock.unlock();
     }
-    std::string str() {
-        const auto sum = win_num + lose_num + draw_num;
-        std::string ret = "------------selfplay info------------\n";
+    double win_rate() const {
         double rate = (double(win_num) + (double(draw_num)/2)) / (double(win_num) + double(lose_num) + double(draw_num));
+        return rate;
+    }
+    int sum_num() const {
+        return win_num + lose_num + draw_num;
+    }
+    double avg_ply() const {
+        return double(sum_ply)/double(this->sum_num());
+    }
+    std::string str() {
+        std::string ret = "------------selfplay info------------\n";
+        const auto rate = this->win_rate();
         ret += "win:" + to_string(win_num) 
             + " lose:" + to_string(lose_num) 
             + " draw:" + to_string(draw_num) 
-            + " sum:" + to_string(sum)
+            + " sum:" + to_string(this->sum_num())
             + " rate:" + to_string(rate) 
-            + " avg_ply:" + to_string(double(sum_ply)/sum); 
+            + " avg_ply:" + to_string(this->avg_ply()); 
         ret += "\n";
         return ret;
     }
@@ -139,6 +159,18 @@ public:
     }
     bool is_end() const {
         return num >= num_limit;
+    }
+    void dump() const {
+        std::ofstream ofs( "selfplay_result.csv", std::ios::out);
+        ofs<<"win_num,lose_num,draw_num,avg_ply,percent,loss,ans\n";
+        ofs<<this->win_num<<","
+           <<this->lose_num<<","
+           <<this->draw_num<<","
+           <<this->avg_ply()<<","
+           <<this->win_rate()<<","
+           <<""<<","
+           <<""<<"\n"
+           ;
     }
 };
 
@@ -194,22 +226,45 @@ void DescentSearcherLocal::search_descent(const uint32 simulation_num) {
         if (interrupt) {
             break;
         }
-        this->evaluate_descent(this->root_node());
+        (USE_DESCENT) ? this->evaluate_descent(this->root_node()) 
+                      : this->evaluate(this->root_node());
     }
 }
 
 void DescentSearcherLocal::evaluate_descent(ubfm::Node *node) {
     //ASSERT(!node->is_resolved());
     node->n++;
-    // Timer timer;
-    // timer.start();
     ASSERT2(node->pos.is_ok(),{
         Tee<<node->pos<<std::endl;
     })
     ASSERT(std::fabs(node->w) <= 1);
-    // ASSERT2(node->is_ok(),{
-    //     Tee<<node->str()<<std::endl;
-    // });
+    if (node->pos.is_draw()) {
+        node->w = nn::NNScore(0.0);
+        node->state = ubfm::NodeState::NodeDraw;
+        return;
+    } 
+    if (node->pos.is_lose()) {
+        node->w = ubfm::score_lose(node->ply);
+        node->state = ubfm::NodeState::NodeLose;
+        return;
+    }
+    if (node->is_terminal()) {
+        this->expand(node);
+        this->predict(node);
+        this->update_node(node);
+    } 
+    auto next_node = this->next_child<true>(node);
+    if (next_node != nullptr) {
+        this->evaluate_descent(next_node);
+        this->update_node(node);
+    }
+}
+void DescentSearcherLocal::evaluate(ubfm::Node *node) {
+    node->n++;
+    ASSERT2(node->pos.is_ok(),{
+        Tee<<node->pos<<std::endl;
+    })
+    ASSERT(std::fabs(node->w) <= 1);
     
     if (node->pos.is_draw()) {
         node->w = nn::NNScore(0.0);
@@ -229,7 +284,7 @@ void DescentSearcherLocal::evaluate_descent(ubfm::Node *node) {
         ASSERT2(next_node != nullptr,{
             Tee<<node->str()<<std::endl;
         })
-        this->evaluate_descent(next_node);
+        this->evaluate(next_node);
     }
     this->update_node(node);
 }
@@ -297,14 +352,78 @@ bool DescentSearcherLocal::interrupt_descent(const uint32 current_num, const uin
     return false;
 }
 
+void DescentSearcherLocal::add_replay_buffer(ubfm::Node *node) {
+    const auto key = hash::hash_key(node->pos);
+    this->replay_buffer.push_back(key, node->w);
+    REP(i, node->child_len) {
+
+        ASSERT(i>=0);
+        ASSERT(i<node->child_len);
+        auto child = node->child(i);
+
+        if (child->is_terminal() && !child->is_resolved()) {
+            continue;
+        }
+        this->add_replay_buffer(child);
+    }
+}
+
 Move DescentSearcherLocal::execute_descent(game::Position &pos) {
     this->root_node()->pos = pos;
     this->search_descent(this->po_num);
-    this->choice_best_move_count();
-    const auto k = hash::hash_key(this->root_node()->pos);
-    const auto w = this->root_node()->w;
-    this->replay_buffer.push_back(k,w);
+    this->choice_best_move_e_greedy();
+    //this->choice_best_move_count();
+    //this->choice_best_move_ordinal();
+    //this->choice_best_move_diff();
+    //this->choice_best_move_softmax();
+    //this->choice_best_move_random();
+    //this->choice_best_move_greedy();
+    //this->choice_best_move_dropout();
+    if (USE_DESCENT) {
+        this->add_replay_buffer(this->root_node());        
+    } else {
+        const auto k = hash::hash_key(this->root_node()->pos);
+        const auto w = this->root_node()->w;
+        this->replay_buffer.push_back(k,w);
+    }
    return this->root_node()->best_move;
+}
+
+void DescentSearcherLocal::choice_best_move_e_greedy() {
+
+    std::vector<nn::NNScore> scores;
+    REP(i, this->root_node()->child_len) {
+        scores.push_back(nn::NNScore(0.0));
+    }
+    auto find_resolved_flag = false;
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node()->child_len) {
+                    scores[i] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                find_resolved_flag = true;
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = nn::NNScore(0.0) + (rand_double() / 1000);
+            } else if (child->is_win()) {
+                scores[i] = ubfm::score_lose(0) + (rand_double() / 1000);
+            }
+        } else {
+            scores[i] = -child->w;
+        }
+    }
+    auto index = -1;
+    if (!find_resolved_flag && rand_double() < 0.2) {
+        index = my_rand(this->root_node()->child_len);
+    } else {
+        auto iter = std::max_element(scores.begin(), scores.end());
+        index = std::distance(scores.begin(), iter);
+    }
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
 }
 
 void DescentSearcherLocal::choice_best_move_count() {
@@ -345,6 +464,7 @@ void DescentSearcherLocal::choice_best_move_count() {
             << " w:" << padding_str(to_string(-child->w),7) 
           //  << " oracle:" << padding_str(to_string(oracle),2) 
             << " org:" << padding_str(to_string(num[i]),3)<<" "
+            << " score:" << padding_str(to_string(scores[i]),7)<<" "
             <<move_str(child->parent_move)<<std::endl;
 #endif
     }
@@ -357,6 +477,277 @@ void DescentSearcherLocal::choice_best_move_count() {
     auto child = this->root_node()->child(index);
     this->root_node()->best_move = child->parent_move;
     this->root_node()->w = -child->w;
+}
+void DescentSearcherLocal::choice_best_move_ordinal() {
+
+    std::vector<nn::NNScore> scores;
+    REP(i, this->root_node()->child_len) {
+        scores.push_back(nn::NNScore(0.0));
+    }
+    auto find_resolved_flag = false;
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node()->child_len) {
+                    scores[i] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                find_resolved_flag = true;
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = nn::NNScore(0.0) + (rand_double() / 1000);
+            } else if (child->is_win()) {
+                scores[i] = ubfm::score_lose(0) + (rand_double() / 1000);
+            }
+        } else {
+            scores[i] = static_cast<nn::NNScore>(child->n) + (rand_double() / 10);
+        }
+    }
+    auto index = -1;
+#if DEBUG_OUT
+    Tee<<"\n";
+    REP(i,scores.size()) {
+        Tee<<i<<":"<<scores[i]<<std::endl;
+    }
+#endif
+    if (!find_resolved_flag) {
+        double prob = 1;
+        while(prob > 0.7) {
+            auto iter = std::max_element(scores.begin(), scores.end());
+            index = std::distance(scores.begin(), iter);
+            scores[index] = static_cast<nn::NNScore>(-1);
+#if DEBUG_OUT
+            Tee<<"select:"<<index<<" ";
+#endif
+            prob = rand_double();
+        }
+    } else {
+        auto iter = std::max_element(scores.begin(), scores.end());
+        index = std::distance(scores.begin(), iter);
+    }
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
+
+}
+
+void DescentSearcherLocal::choice_best_move_diff() {
+    std::vector<nn::NNScore> scores;
+    REP(i, this->root_node()->child_len) {
+        scores.push_back(nn::NNScore(0.0));
+    }
+    auto find_resolved_flag = false;
+    auto best_score = nn::NNScore(-2.0);
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node()->child_len) {
+                    scores[i] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                find_resolved_flag = true;
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = nn::NNScore(0.0) + (rand_double() / 1000);
+            } else if (child->is_win()) {
+                scores[i] = ubfm::score_lose(0) + (rand_double() / 1000);
+            }
+        } else {
+            scores[i] = -child->w;
+        }
+        if (scores[i] > best_score) {
+            best_score = scores[i];
+        }
+    }
+    std::vector<nn::Feature> feat_list;
+    std::vector<nn::NNScore> outputs_list;
+    feat_list.push_back(nn::feature(this->root_node()->pos));
+    model::predict(this->gpu_id, feat_list, outputs_list);
+    const auto init_score = outputs_list[0];
+    const auto diff = std::abs(best_score - init_score);
+#if DEBUG_OUT
+    for(auto i = 0; i < scores.size(); i++) {
+        Tee<<i<<":"<<scores[i]<<std::endl;
+    }
+    Tee<<"init:"<<init_score<<std::endl;
+    Tee<<"diff:"<<diff<<std::endl;
+#endif
+
+    auto index = -1;
+    if (!find_resolved_flag && std::abs(diff) > 0.3) {
+        index = my_rand(this->root_node()->child_len);
+    } else {
+        auto iter = std::max_element(scores.begin(), scores.end());
+        index = std::distance(scores.begin(), iter);
+    }
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
+}
+
+void DescentSearcherLocal::choice_best_move_softmax() {
+    std::vector<nn::NNScore> scores;
+    REP(i, this->root_node()->child_len) {
+        scores.push_back(nn::NNScore(0.0));
+    }
+    auto find_resolved_flag = false;
+    auto max_score = nn::NNScore(-1);
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node()->child_len) {
+                    scores[i] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                find_resolved_flag = true;
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = child->n;
+            } else if (child->is_win()) {
+                scores[i] = 0;
+            }
+        } else {
+            scores[i] = child->n;
+        }
+        if (scores[i] > max_score) {
+            max_score = scores[i];
+        }
+    }
+    for(auto i = 0u; i < scores.size(); i++) {
+        scores[i] = std::exp((scores[i] - max_score)/2);
+#if DEBUG_OUT
+        Tee<<scores[i]<<std::endl;
+#endif
+    }
+    auto index = -1;
+    if (!find_resolved_flag ) {
+        index = my_choice(scores);
+#if DEBUG_OUT
+        Tee<<"select:"<<index<<std::endl;
+#endif
+    } else {
+        auto iter = std::max_element(scores.begin(), scores.end());
+        index = std::distance(scores.begin(), iter);
+    }
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
+}
+
+void DescentSearcherLocal::choice_best_move_random() {
+    std::vector<nn::NNScore> scores;
+    REP(i, this->root_node()->child_len) {
+        scores.push_back(nn::NNScore(0.0));
+    }
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node()->child_len) {
+                    scores[i] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = rand_double();
+            } else if (child->is_win()) {
+                scores[i] = rand_double()/1000;
+            }
+        } else {
+            scores[i] = rand_double();
+        }
+    }
+    auto iter = std::max_element(scores.begin(), scores.end());
+    auto index = std::distance(scores.begin(), iter);
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
+}
+
+void DescentSearcherLocal::choice_best_move_greedy() {
+
+    std::vector<nn::NNScore> scores;
+    REP(i, this->root_node()->child_len) {
+        scores.push_back(nn::NNScore(0.0));
+    }
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node()->child_len) {
+                    scores[i] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = child->n + (rand_double() / 1000);
+            } else if (child->is_win()) {
+                scores[i] = 0;
+            }
+        } else {
+            scores[i] = child->n + (rand_double() / 1000);
+        }
+    }
+    auto iter = std::max_element(scores.begin(), scores.end());
+    auto index = std::distance(scores.begin(), iter);
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
+}
+
+void DescentSearcherLocal::choice_best_move_dropout() {
+
+    std::vector<std::vector<nn::NNScore>> mc_dropout_scores;
+    std::vector<nn::NNScore> scores;
+    constexpr auto SAMPLE_NUM = 32;
+    REP(i, this->root_node()->child_len) {
+        std::vector<nn::NNScore> v;
+        REP(j,SAMPLE_NUM) {
+            v.push_back(nn::NNScore(0.0));
+        }
+        mc_dropout_scores.push_back(v);
+        scores.push_back(nn::NNScore(0.0));
+    }
+
+    REP(i, SAMPLE_NUM) {
+        std::vector<nn::Feature> feat_list;
+        std::vector<nn::NNScore> outputs_list;
+        feat_list.push_back(nn::feature(this->root_node()->pos));
+        model::predict(this->gpu_id, feat_list, outputs_list);
+        REP(j, this->root_node()->child_len) {
+            auto s = outputs_list[j];
+            if (std::abs(s) < 1e-5) {
+                s = 0;
+            } else if (s > 0.999) {
+                s = 0.999;
+            } else if (s < -0.999) {
+                s = -0.999;
+            }   
+            mc_dropout_scores[j][i] = s;
+        }
+    }
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        scores[i] = child->n + (my_std(mc_dropout_scores[i]) * 10000) + (rand_double()/1e10);
+    }
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(i, this->root_node()->child_len) {
+                    scores[i] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                break;
+            } else if (child->is_draw()) {
+                //pass
+            } else if (child->is_win()) {
+                scores[i] = -1 + (rand_double()/1e10);
+            }
+        } 
+    }
+    auto iter = std::max_element(scores.begin(), scores.end());
+    auto index = std::distance(scores.begin(), iter);
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
 }
 
 nn::NNScore int_to_nn(const int sc) {
@@ -422,13 +813,14 @@ void DescentSearcherLocal::selfplay() {
             // } 
             pos = pos.next(best_move);
         }
-        if (i % 10 == 0) {
+        if (i % 100 == 0) {
             this->cw.dump();
         }
-        if (this->thread_id == 0 && i % 10 == 0) {
+        if (this->thread_id == 0 && i % 100 == 0) {
             Tee<<g_selfplay_info.str();
         }
     }
+    g_selfplay_info.dump();
 }
 }
 #endif

@@ -29,7 +29,7 @@ class State:
     def is_win(self):
         return self.pos.is_win()
     def is_draw(self):
-        return self.pos.is_draw()
+        return self.pos.is_draw(4)
     def is_lose(self):
         return self.pos.is_lose()
     def is_done(self):

@@ -17,38 +17,40 @@ DN_INPUT_SHAPE = (3, 4, 42) # 入力シェイプ
 DN_OUTPUT_SIZE = 3 * 4 * 5 * 8 # 配置先(3*4) * 駒の種類 * 移動方向
 
 class ResNetBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels, drop):
         super(ResNetBlock, self).__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(channels)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(channels)
+        self.drop = drop
 
     def forward(self, x):
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = F.relu(out)
-
+        
+        out = F.relu(self.bn1(x), inplace=True)
+        out = self.conv1(out)
+        out = F.relu(self.bn2(out), inplace=True)
+        out = F.dropout(out, p=0.5, training=self.drop)
         out = self.conv2(out)
-        out = self.bn2(out)
-
         return F.relu(out + x)
+        
 class SingleNet(nn.Module):
-    def __init__(self, blocks=3, channels=192, fcl=256):
+    def __init__(self, blocks=3, channels=192, fcl=256, drop=False):
         super(SingleNet, self).__init__()
-        self.convl1 = nn.Conv2d(in_channels=42, out_channels=channels, kernel_size=3, padding=1, bias=False)
+        self.convl1 = nn.Conv2d(in_channels=DN_INPUT_SHAPE[2], out_channels=channels, kernel_size=3, padding=1, bias=False)
         
         self.norm1 = nn.BatchNorm2d(channels)
 
         # resnet blocks
-        self.blocks = nn.Sequential(*[ResNetBlock(channels) for _ in range(blocks)])
+        self.blocks = nn.Sequential(*[ResNetBlock(channels,False) for _ in range(blocks)])
 
         # value head
         self.value_conv1 = nn.Conv2d(in_channels=channels, out_channels=DN_OUTPUT_SIZE, kernel_size=1, bias=False)
         self.value_norm1 = nn.BatchNorm2d(DN_OUTPUT_SIZE)
         self.value_fc1 = nn.Linear(DN_INPUT_SHAPE[0] * DN_INPUT_SHAPE[1] * DN_OUTPUT_SIZE, fcl)
         self.value_fc2 = nn.Linear(fcl, 1)
-
+        self.drop = drop
+        
     def forward(self, feature1):
 
         x1_1 = self.convl1(feature1)
@@ -59,7 +61,9 @@ class SingleNet(nn.Module):
 
         # value head
         value = F.relu(self.value_norm1(self.value_conv1(x)))
+        value = F.dropout(value,p=0.3,training=self.drop)
         value = F.relu(self.value_fc1(torch.flatten(value, 1)))
+        value = F.dropout(value,p=0.3,training=self.drop)
         value = torch.tanh(self.value_fc2(value))
         return value
         
@@ -117,4 +121,4 @@ def conv_jit():
 if __name__ == '__main__':
     single_network()
     print_network()
-    #conv_jit()
+    conv_jit()
