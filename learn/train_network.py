@@ -19,7 +19,7 @@ import glob
 import re
 from evaluate_network import *
 # パラメータの準備
-RN_EPOCHS = 30 # 学習回数
+RN_EPOCHS = 15 # 学習回数
 RN_BATCH_SIZE = 128 # バッチサイズ
 LAMBDA = 0.7
 
@@ -47,6 +47,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         iterate = checkpoint['iterate'] + 1
+        print(f"restart:{iterate}")
 
     dataset = HistoryDataset(path_list)
     dataset_len = len(dataset)
@@ -76,7 +77,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
             optimizer.step()
             sum_loss += loss.item()
             sum_num += 1
-            if sum_num % 1000 == 0:
+            if sum_num % 10000 == 0:
                 n = batch_size * sum_num
                 now = time.time()
                 print(f"{n}/{dataset_len} ({100 * (n/dataset_len):.3f}%) loss:{sum_loss/sum_num} sec:{int(now-start)}")

@@ -19,7 +19,7 @@
 #include "search.hpp"
 
 #define DEBUG_OUT 0
-static constexpr bool USE_DESCENT = false;
+static constexpr bool USE_DESCENT = true;
 
 namespace selfplay {
 
@@ -793,7 +793,7 @@ void DescentSearcherLocal::selfplay() {
                 break;
             }
 #if 1
-            this->po_num = 50;
+            this->po_num = 25;
             
             auto best_move = execute_descent(pos);
            
