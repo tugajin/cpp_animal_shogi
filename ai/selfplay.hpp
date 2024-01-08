@@ -19,7 +19,7 @@
 #include "search.hpp"
 
 #define DEBUG_OUT 0
-static constexpr bool USE_DESCENT = true;
+static constexpr bool USE_DESCENT = false;
 
 namespace selfplay {
 
@@ -82,6 +82,7 @@ public:
     void run_descent();
     void search_descent(const uint32 simulation_num);
     void selfplay();
+    void bishop_learning();
     ReplayBuffer replay_buffer;
     reward::CountReward cw;
 private:
@@ -178,6 +179,72 @@ extern SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
 extern int g_thread_counter;
 extern SelfPlayInfo g_selfplay_info;
 
+game::Position generate_random_position() {
+    while (1) {
+        ColorPiece pieces[SQUARE_SIZE] = {
+            COLOR_EMPTY, COLOR_EMPTY, COLOR_EMPTY,
+            COLOR_EMPTY, COLOR_EMPTY, COLOR_EMPTY,
+            COLOR_EMPTY, COLOR_EMPTY, COLOR_EMPTY,
+            COLOR_EMPTY, COLOR_EMPTY, COLOR_EMPTY
+            };
+        Hand hand[COLOR_SIZE] = {HAND_NONE, HAND_NONE};
+        Color turn = BLACK;
+        Piece pieces_list[] = {HIYOKO, KIRIN, ZOU, HIYOKO, KIRIN, ZOU };
+        
+        const auto white_lion_index = my_rand(SQUARE_SIZE);
+        pieces[white_lion_index] = WHITE_LION;
+        auto black_lion_index = -1;
+        while (1) {
+            black_lion_index = my_rand(SQUARE_SIZE);
+            if (pieces[black_lion_index] == COLOR_EMPTY) {
+                pieces[black_lion_index] = BLACK_LION;
+                break;
+            }
+        }
+
+        for (const auto pc : pieces_list) {
+            while (1) {
+                const auto index = my_rand(SQUARE_SIZE + 1);
+                const auto which = my_rand(2);
+                const auto color = (which == 0) ? BLACK : WHITE;
+                const auto cp = color_piece(pc, color);
+                if (index == SQUARE_SIZE) {
+                    if (pc == LION) { continue; }
+                    hand[color] = inc_hand(hand[color],pc);
+                    break;
+                } else if (pieces[index] == COLOR_EMPTY) {
+                    if (pc != HIYOKO) {
+                        pieces[index] = cp;
+                        break;
+                    } 
+                    if (rand_double() < 0.5) {
+                        pieces[index] = cp; 
+                        break;
+                    }
+                    if (cp == BLACK_HIYOKO) {
+                        pieces[index] = BLACK_NIWATORI;
+                    } else {
+                        pieces[index] = WHITE_NIWATORI;
+                    }
+                    break;
+                }
+            }
+        }
+        auto pos = game::Position(pieces, hand, turn);
+        auto att = attack::Attacker(pos);
+        if (att.attacker_num[BLACK][white_lion_index] > 1) {
+            continue;
+        }
+        if (att.attacker_num[WHITE][black_lion_index] > 1) {
+            continue;
+        }
+        if (pos.is_win() || pos.is_lose()) {
+            continue;
+        }
+        return pos;
+    }
+}
+
 void execute_selfplay(const int num) {
     g_thread_counter = 0;
     g_selfplay_info.init();
@@ -214,7 +281,8 @@ void SelfPlayWorker::join() {
 
 void DescentSearcherLocal::run_descent() {
     this->thread = new std::thread([this]() {
-        this->selfplay();
+        //this->selfplay();
+        this->bishop_learning();
     });
 }
 void DescentSearcherLocal::search_descent(const uint32 simulation_num) {
@@ -253,7 +321,7 @@ void DescentSearcherLocal::evaluate_descent(ubfm::Node *node) {
         this->predict(node);
         this->update_node(node);
     } 
-    auto next_node = this->next_child<true>(node);
+    auto next_node = this->next_child(node);
     if (next_node != nullptr) {
         this->evaluate_descent(next_node);
         this->update_node(node);
@@ -280,7 +348,7 @@ void DescentSearcherLocal::evaluate(ubfm::Node *node) {
         this->expand(node);
         this->predict(node);
     } else {
-        auto next_node = this->next_child<true>(node);
+        auto next_node = this->next_child(node);
         ASSERT2(next_node != nullptr,{
             Tee<<node->str()<<std::endl;
         })
@@ -750,15 +818,6 @@ void DescentSearcherLocal::choice_best_move_dropout() {
     this->root_node()->best_move = child->parent_move;
 }
 
-nn::NNScore int_to_nn(const int sc) {
-    if (sc >= (search::SEARCH_MATE - 100)) {
-        return nn::NNScore(1);
-    } else if (sc <= -(search::SEARCH_MATE - 100)) {
-        return nn::NNScore(-1);
-    }
-    return std::tanh(static_cast<double>(sc)/1000.0);
-}
-
 void DescentSearcherLocal::selfplay() {
     Tee<<"start selfplay\n";
     for(auto i = 0; !g_selfplay_info.is_end() ; i++) {
@@ -792,19 +851,12 @@ void DescentSearcherLocal::selfplay() {
                 this->replay_buffer.close();
                 break;
             }
-#if 1
             this->po_num = 25;
             
             auto best_move = execute_descent(pos);
            
             this->cw.update(pos.history());
-#else
-            auto sc = search::SEARCH_MIN;
-            auto best_move = search::search_root(pos, 5, sc);
-            const auto k = hash::hash_key(pos);
-            const auto w = int_to_nn(sc);
-            this->replay_buffer.push_back(k,w);
-#endif
+
             // if (!attack::in_checked(pos)) {
             //     const auto mate_move = mate::mate_search(pos,5);
             //     if (mate_move != MOVE_NONE) {
@@ -820,6 +872,31 @@ void DescentSearcherLocal::selfplay() {
             Tee<<g_selfplay_info.str();
         }
     }
+    g_selfplay_info.dump();
+}
+void DescentSearcherLocal::bishop_learning() {
+    Tee<<"start bishop_learning\n";
+    this->replay_buffer.open();
+
+    for(auto i = 0; !g_selfplay_info.is_end()  ; i++) {
+        game::Position pos;
+        pos = generate_random_position();
+#if DEBUG_OUT
+        Tee<<"bishop learning("<<this->thread_id<<")："<<i<<std::endl;
+        Tee<<pos<<std::endl;
+        Tee<<g_selfplay_info.str();
+#endif
+
+        this->global->clear_tree();
+        this->po_num = 1000;
+        execute_descent(pos);
+        if (this->thread_id == 0 && i % 1000 == 0) {
+            Tee<<g_selfplay_info.str();
+        }
+        g_selfplay_info.inc(0,0);
+    }
+    this->replay_buffer.write_data();
+    this->replay_buffer.close();
     g_selfplay_info.dump();
 }
 }

@@ -100,8 +100,8 @@ void OracleData::select_random() {
     std::ofstream outputFile("problem.txt");
     {
         const auto size = win_data.size();
-        auto num = 0u;
-        for(auto i = 0; i < size; i++) {
+        auto num = 0;
+        for(size_t i = 0; i < size; i++) {
             auto pos = hash::from_hash(Key(win_data[i]));
             if (!pos.is_win() && !pos.is_lose() && !pos.is_draw()) {
                 outputFile << win_data[i] << ",1\n";
@@ -114,8 +114,8 @@ void OracleData::select_random() {
     }
     {
         const auto size = lose_data.size();
-        auto num = 0u;
-        for(auto i = 0; i < size; i++) {
+        auto num = 0;
+        for(size_t i = 0; i < size; i++) {
             auto pos = hash::from_hash(Key(lose_data[i]));
             if (!pos.is_win() && !pos.is_lose() && !pos.is_draw()) {
                 outputFile << lose_data[i] << ",-1\n";

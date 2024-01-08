@@ -31,24 +31,6 @@ inline nn::NNScore score_lose(const int ply) {
     return -score_win(ply);
 }
 
-std::string node_state_str(const NodeState n) {
-    switch (n) {
-        case NodeWin:
-            return "NODE_WIN";
-        case NodeLose:
-            return "NODE_LOSE";
-        case NodeDraw:
-            return "NODE_DRAW";
-        case NodeUnknown:
-            return "NODE_UNKNOWN";
-        default:
-            return "ERROR_NODE_STATE";
-    }
-}
-std::ostream& operator<<(std::ostream& os, const NodeState n) {
-    os << node_state_str(n);
-    return os;
-}
 class Node {
 public:
     Node() : child_nodes(nullptr),
@@ -189,9 +171,8 @@ protected:
     void evaluate(Node *node);
     void predict(Node *node);
     void expand(Node *node);
-    template<bool is_descent> Node *next_child(const Node *node) const;
+    Node *next_child(const Node *node) const;
     void update_node(Node *node);
-    void add_node(const game::Position &pos,const Move parent_move, int ply);
     bool interrupt(const uint32 current_num, const uint32 simulation_num) const;
     Node *root_node() const ;
 
@@ -317,13 +298,13 @@ void UBFMSearcherLocal::search(const uint32 simulation_num) {
     
     const auto is_out = (this->thread_id == 0) && (this->gpu_id == 0);
     for(auto i = 0u ;; ++i) {
-        Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
+        //Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
         const auto interrupt = this->interrupt(i, simulation_num);
         if (interrupt) {
             break;
         }
         this->evaluate(this->root_node());
-        if (is_out) {
+        if (/*is_out*/false) {
             Tee<<this->root_node()->str()<<std::endl;
         }
     }
@@ -358,7 +339,7 @@ void UBFMSearcherLocal::evaluate(Node *node) {
         this->predict(node);
         node->lock_node.unlock();
     } else {
-        auto next_node = this->next_child<false>(node);
+        auto next_node = this->next_child(node);
         node->lock_node.unlock();
         this->evaluate(next_node);
     }
@@ -446,7 +427,7 @@ void UBFMSearcherLocal::predict(Node *node) {
     }
     //Tee<<"  end:"<<timer.elapsed()<<std::endl;
 }
-template<bool is_descent> Node *UBFMSearcherLocal::next_child(const Node *node) const {
+Node *UBFMSearcherLocal::next_child(const Node *node) const {
     ASSERT(node->child_len >= 0);
     Node *best_child = nullptr;
     nn::NNScore best_score = nn::NNScore(-10000);
@@ -459,10 +440,7 @@ template<bool is_descent> Node *UBFMSearcherLocal::next_child(const Node *node) 
         auto child = node->child(i);
         ASSERT(std::fabs(child->w)<=1); 
         if (child->is_resolved()) { continue; }
-        auto score = -child->w;
-        if (is_descent) {
-            score += static_cast<nn::NNScore>(rand_gaussian(0.0,0.2));
-        }
+        const auto score = -child->w + static_cast<nn::NNScore>(rand_gaussian(0.0,0.2));
         if (score > best_score) {
             best_score = score;
             min_num = child->n;
@@ -554,6 +532,32 @@ void UBFMSearcherLocal::update_node(Node *node) {
     node->best_move = best_child->parent_move;
 }
 
+void test_ubfm() {
+    // ファイル名
+    std::string filename = "miss.txt";
+
+    // ファイルを開く
+    std::ifstream file(filename);
+
+    // ファイルが正常に開かれたかを確認
+    if (!file.is_open()) {
+        std::cerr << "ファイルを開けませんでした: " << filename << std::endl;
+        return ;
+    }
+
+    // ファイルから1行ずつ読み込む
+    std::string line;
+    while (std::getline(file, line)) {
+        // ここで各行に対する処理を行う
+        auto k = static_cast<Key>(to_u64(line));
+        auto pos = hash::from_hash(k);
+        ubfm::g_searcher_global.init();
+        ubfm::think_ubfm(pos);
+    }
+
+    // ファイルを閉じる
+    file.close();
+}
 
 }
 #endif

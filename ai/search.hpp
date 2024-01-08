@@ -123,18 +123,25 @@ int search(game::Position &pos, int alpha, int beta, int depth) {
         Tee<<pos<<std::endl;
     });
     ASSERT(alpha < beta);
-    if (pos.is_draw()) {
-        return 0;
+    if (pos.is_win()) {
+        return SEARCH_MATE - 10;
     }
     if (pos.is_lose()) {
         return -SEARCH_MATE + 10;
     }
-    if (pos.is_win()) {
-        return SEARCH_MATE - 10;
+    if (pos.is_draw()) {
+        return 0;
     }
     if (depth < 0) {
-        return q_search(pos,alpha,beta);
+        //return q_search(pos,alpha,beta);
         //return eval(pos);
+        return 0;
+    }
+    if (!attack::in_checked(pos)) {
+        const auto m = mate::mate_search(pos,5);
+        if (m != MOVE_NONE) {
+            return SEARCH_MATE - 4;
+        }
     }
     movelist::MoveList ml;
     gen::legal_moves(pos, ml);
@@ -156,6 +163,32 @@ int search(game::Position &pos, int alpha, int beta, int depth) {
     return best_score;
 }
 void test_search() {
+    // ファイル名
+    std::string filename = "miss.txt";
+
+    // ファイルを開く
+    std::ifstream file(filename);
+
+    // ファイルが正常に開かれたかを確認
+    if (!file.is_open()) {
+        std::cerr << "ファイルを開けませんでした: " << filename << std::endl;
+        return ;
+    }
+
+    // ファイルから1行ずつ読み込む
+    std::string line;
+    while (std::getline(file, line)) {
+        // ここで各行に対する処理を行う
+        auto k = static_cast<Key>(to_u64(line));
+        auto pos = hash::from_hash(k);
+        auto sc = 0;
+        search_root(pos,10,sc);
+        Tee<<pos<<std::endl;
+        Tee<<"score:"<<sc<<std::endl;
+    }
+
+    // ファイルを閉じる
+    file.close();
 }
 
 }

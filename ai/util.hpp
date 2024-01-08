@@ -188,6 +188,10 @@ int to_int(std::string x) {
 	return std::stoi(x);
 }
 
+uint64 to_u64(std::string x) {
+	return std::stoull(x);
+}
+
 void my_sleep(const int  millisec) {
 	std::this_thread::sleep_for(std::chrono::milliseconds(millisec));
 }

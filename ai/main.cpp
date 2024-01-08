@@ -13,6 +13,7 @@
 #include "oracle.hpp"
 #include "reviewbuffer.hpp"
 #include "model.hpp"
+#include "cns.hpp"
 
 TeeStream Tee;
 
@@ -25,6 +26,9 @@ ColorPiece g_delta_mask[DELTA_NB];
 
 namespace ubfm {
 UBFMSearcherGlobal g_searcher_global;
+}
+namespace cns {
+CNSSearcherGlobal g_searcher_global;
 }
 namespace selfplay {
 SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
@@ -49,7 +53,10 @@ int main(int argc, char **argv){
     init_table();
     //oracle::g_oracle.load();
     model::g_gpu_model[0].load_model(0);
-    selfplay::execute_selfplay(num);
+    cns::test_cns();
+    //ubfm::test_ubfm();
+    //selfplay::execute_selfplay(num);
     //oracle::g_oracle.select_random();
+    //search::test_search();
     return 0;
 }
