@@ -65,11 +65,11 @@ def evaluate_problem():
 
         if score == result:
             correct_num += 1
-        # else:
-        #     print(state)
-        #     print("org:",org_score)
-        #     print("score:",score)
-        #     print("result:",result)
+        #else:
+        #    print(state)
+        #    print("org:",org_score)
+        #    print("score:",score)
+        #    print("result:",result)
     message = "ans:",correct_num/len(problem_list),f"({correct_num})/({len(problem_list)})"
     print(message)
     notify_line(message)

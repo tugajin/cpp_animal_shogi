@@ -10,33 +10,6 @@ import numpy as np
 DN_INPUT_SHAPE = (3, 4, 42) # 入力シェイプ
 
 
-class Attention(nn.Module):
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim ** -0.5
-
-        self.head_dim = head_dim
-        self.q = nn.Linear(dim, dim, bias=qkv_bias)
-        self.k = nn.Linear(dim, dim, bias=qkv_bias)
-        self.v = nn.Linear(dim, dim, bias=qkv_bias)
-        self.proj = nn.Linear(dim, dim)
-
-    def forward(self, x):
-        B, N, C = x.shape
-
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).permute([0, 2, 1, 3])
-        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).permute([0, 2, 1, 3])
-        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).permute([0, 2, 1, 3])
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        return x
-
 class MLP(nn.Module):
     def __init__(self, dim, hidden_dim):
         """ [input]
@@ -72,7 +45,7 @@ class Pooling(nn.Module):
         return self.pool(x) - x
 
 class Block(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
+    def __init__(self, dim, num_heads, height, width, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
         self.norm1 = norm_layer(dim, elementwise_affine=False)
@@ -80,9 +53,16 @@ class Block(nn.Module):
         self.norm2 = norm_layer(dim, elementwise_affine=False)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = MLP(dim, mlp_hidden_dim)
+        self.height = height
+        self.width = width
 
     def forward(self, x):
-        x = x + self.pool(self.norm1(x))
+        B, N, C = x.shape
+        y = self.norm1(x)
+        y = y.permute(0, 2, 1).reshape(B, C, self.height, self.width)
+        y = self.pool(y)
+        y = y.reshape(B, C, N).permute(0, 2, 1)
+        x = x + y
         x = x + self.mlp(self.norm2(x))
         return x
 
@@ -124,7 +104,7 @@ class PoolformerModel(nn.Module):
         block_num = 5
         square_num = 12
         self.first_encoding_ = torch.nn.Linear(input_channel_num, channel_num)
-        self.encoder_ = nn.Sequential(*[Block(dim=channel_num, num_heads=nhead) for _ in range(block_num)])
+        self.encoder_ = nn.Sequential(*[Block(dim=channel_num, num_heads=nhead, height=3, width=4) for _ in range(block_num)])
         self.channel_num = channel_num
         self.value_head_ = ValueHead(channel_num, 1)
         self.positional_encoding_ = torch.nn.Parameter(torch.zeros([1, square_num, channel_num]), requires_grad=True)

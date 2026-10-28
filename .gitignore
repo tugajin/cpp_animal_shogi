@@ -5,3 +5,4 @@ learn/data
 learn/count.json
 oracle/build
 *.dat
+.venv

@@ -53,9 +53,9 @@ int main(int argc, char **argv){
     init_table();
     //oracle::g_oracle.load();
     model::g_gpu_model[0].load_model(0);
-    cns::test_cns();
+    //cns::test_cns();
     //ubfm::test_ubfm();
-    //selfplay::execute_selfplay(num);
+    selfplay::execute_selfplay(num);
     //oracle::g_oracle.select_random();
     //search::test_search();
     return 0;

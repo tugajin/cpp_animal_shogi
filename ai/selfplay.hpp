@@ -4,6 +4,7 @@
 #include <vector>
 #include <utility>
 #include <thread>
+#include <atomic>
 #include <fstream>
 #include <filesystem>
 #include "nlohmann/json.hpp"
@@ -104,7 +105,7 @@ private:
 
 class SelfPlayInfo {
 private:
-    int num;
+    std::atomic<int> num;
     int win_num;
     int lose_num;
     int draw_num;
@@ -115,6 +116,7 @@ public:
     void init() {
         win_num = lose_num = draw_num = 0;
         num = num_limit = 0;
+        sum_ply = 0;
     }
     void inc(const int result, const int ply) {
         lock.lock();
@@ -281,8 +283,8 @@ void SelfPlayWorker::join() {
 
 void DescentSearcherLocal::run_descent() {
     this->thread = new std::thread([this]() {
-        //this->selfplay();
-        this->bishop_learning();
+        this->selfplay();
+        //this->bishop_learning();
     });
 }
 void DescentSearcherLocal::search_descent(const uint32 simulation_num) {

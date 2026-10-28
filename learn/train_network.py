@@ -70,7 +70,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
             outputs = model(x)
             outputs = torch.squeeze(outputs)
             
-            # loss =  (LAMBDA * torch.sum((outputs - y0) ** 2)) + ((1 - LAMBDA) * torch.sum((outputs - y1) ** 2))
+            #loss =  (LAMBDA * torch.sum((outputs - y0) ** 2)) + ((1 - LAMBDA) * torch.sum((outputs - y1) ** 2))
             loss =  torch.sum((outputs - y0) ** 2)
 
             loss.backward()

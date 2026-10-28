@@ -111,7 +111,8 @@ extern TeeStream Tee;
 std::string timestamp() {
     std::time_t t = std::time(nullptr);
 	char mbstr[256];
-	if (std::strftime(mbstr, 256, "%Y%m%d-%H%M%S", std::localtime(&t))) {
+	struct tm tm_buf;
+	if (std::strftime(mbstr, 256, "%Y%m%d-%H%M%S", localtime_r(&t, &tm_buf))) {
 	    std::string str = mbstr;
 		return str;
 	}

@@ -47,7 +47,7 @@ class TransformerModel(nn.Module):
         layer_num = 5
         self.channel_num = channel_num
         self.first_encoding_ = torch.nn.Linear(input_channel_num, channel_num)
-        encoder_layer = torch.nn.TransformerEncoderLayer(channel_num, nhead=8,dim_feedforward=channel_num*4)
+        encoder_layer = torch.nn.TransformerEncoderLayer(channel_num, nhead=8, dim_feedforward=channel_num*4, batch_first=True)
         self.encoder_ = torch.nn.TransformerEncoder(encoder_layer,layer_num)
         self.value_head_ = ValueHead(channel_num, 1)
         self.positional_encoding_ = torch.nn.Parameter(torch.zeros([1, square_num, channel_num]), requires_grad=True)
