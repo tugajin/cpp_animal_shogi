@@ -83,7 +83,7 @@ def print_network():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
    
     model = SingleNet()
-    model.load_state_dict(torch.load('./model/best_single.h5'))
+    model.load_state_dict(torch.load('./model/best_single.h5', weights_only=True))
     
     params = 0
     for p in model.parameters():
@@ -112,7 +112,7 @@ def print_network():
 
 def conv_jit():
     model = SingleNet()
-    model.load_state_dict(torch.load('./model/best_single.h5'))
+    model.load_state_dict(torch.load('./model/best_single.h5', weights_only=True))
     model.eval()
     sm = torch.jit.script(model)
     sm.save("./model/best_single_jit.pt")

@@ -14,6 +14,7 @@
 #include "reviewbuffer.hpp"
 #include "model.hpp"
 #include "cns.hpp"
+#include "bench.hpp"
 
 TeeStream Tee;
 
@@ -43,20 +44,28 @@ ReviewBuffer g_review_buffer;
 }
 namespace model {
 GPUModel g_gpu_model[GPUModel::GPU_NUM];
+BatchPredictor g_batch_predictor;
 }
 int main(int argc, char **argv){
     auto num = 999999999;
+    std::string mode = "selfplay";
     if (argc > 1) {
-        num = std::stoi(std::string(argv[1]));
+        std::string arg1(argv[1]);
+        if (arg1 == "bench") {
+            mode = "bench";
+        } else {
+            num = std::stoi(arg1);
+        }
     }
     check_mode();
     init_table();
     //oracle::g_oracle.load();
     model::g_gpu_model[0].load_model(0);
-    //cns::test_cns();
-    //ubfm::test_ubfm();
-    selfplay::execute_selfplay(num);
-    //oracle::g_oracle.select_random();
-    //search::test_search();
+
+    if (mode == "bench") {
+        bench::run_bench();
+    } else {
+        selfplay::execute_selfplay(num);
+    }
     return 0;
 }

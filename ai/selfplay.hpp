@@ -34,11 +34,14 @@ public:
     void open() {
         this->info.clear();
         std::filesystem::create_directory("data");
-        auto filename = "./data/selfplay_" + timestamp() + "_" + to_string(my_rand(9999)) + ".json";
-        this->ofs.open(filename);
+        auto base = "./data/selfplay_" + timestamp() + "_" + to_string(my_rand(9999));
+        this->tmp_path = base + ".tmp";
+        this->final_path = base + ".json";
+        this->ofs.open(this->tmp_path);
     }
     void close() {
         this->ofs.close();
+        std::filesystem::rename(this->tmp_path, this->final_path);
         this->info.clear();
     }
     void push_back(const Key hash, const nn::NNScore sc) {
@@ -57,6 +60,8 @@ public:
 private:
     json info;
     std::ofstream ofs;
+    std::string tmp_path;
+    std::string final_path;
 };
 
 class DescentSearcherLocal ;
@@ -66,7 +71,7 @@ public:
 #if DEBUG_OUT
     static constexpr int NUM = 1;
 #else
-    static constexpr int NUM = 4;
+    static constexpr int NUM = 12;
 #endif
     void run_descent();
     void join();
@@ -78,14 +83,14 @@ private:
 class DescentSearcherLocal : public ubfm::UBFMSearcherLocal {
 public:
     DescentSearcherLocal(const int id, const int gpu_id, SelfPlayWorker * selfplay) :
-    ubfm::UBFMSearcherLocal(id, gpu_id, selfplay),cw(reward::CountReward(id)) {
+    ubfm::UBFMSearcherLocal(id, gpu_id, selfplay) {
     }
     void run_descent();
     void search_descent(const uint32 simulation_num);
     void selfplay();
     void bishop_learning();
     ReplayBuffer replay_buffer;
-    reward::CountReward cw;
+    //reward::CountReward cw;
 private:
     void evaluate_descent(ubfm::Node *node);
     void evaluate(ubfm::Node *node);
@@ -95,11 +100,11 @@ private:
     void choice_best_move_e_greedy();
     void choice_best_move_count();
     void choice_best_move_ordinal();
-    void choice_best_move_diff();
+    //void choice_best_move_diff();
     void choice_best_move_softmax();
     void choice_best_move_random();
     void choice_best_move_greedy();
-    void choice_best_move_dropout();
+    //void choice_best_move_dropout();
     int po_num = 100;
 };
 
@@ -146,14 +151,14 @@ public:
         return double(sum_ply)/double(this->sum_num());
     }
     std::string str() {
-        std::string ret = "------------selfplay info------------\n";
+        std::string ret = "------------selfplay info [" + timestamp() + "]------------\n";
         const auto rate = this->win_rate();
-        ret += "win:" + to_string(win_num) 
-            + " lose:" + to_string(lose_num) 
-            + " draw:" + to_string(draw_num) 
+        ret += "win:" + to_string(win_num)
+            + " lose:" + to_string(lose_num)
+            + " draw:" + to_string(draw_num)
             + " sum:" + to_string(this->sum_num())
-            + " rate:" + to_string(rate) 
-            + " avg_ply:" + to_string(this->avg_ply()); 
+            + " rate:" + to_string(rate)
+            + " avg_ply:" + to_string(this->avg_ply());
         ret += "\n";
         return ret;
     }
@@ -251,6 +256,10 @@ void execute_selfplay(const int num) {
     g_thread_counter = 0;
     g_selfplay_info.init();
     g_selfplay_info.set_limit(num);
+
+    ubfm::g_use_batch_predict = true;
+    model::g_batch_predictor.start(0, 128, 1000);
+
     REP(i, SelfPlayWorker::NUM) {
         selfplay::g_selfplay_worker[i].init();
     }
@@ -260,7 +269,18 @@ void execute_selfplay(const int num) {
     REP(i, SelfPlayWorker::NUM) {
         selfplay::g_selfplay_worker[i].join();
     }
+
+    model::g_batch_predictor.stop();
+    ubfm::g_use_batch_predict = false;
+
     Tee<<g_selfplay_info.str();
+    // auto &s = model::g_gpu_model[0].stats;
+    // Tee<<"predict calls:"<<s.call_count.load()
+    //    <<" total_batch:"<<s.total_batch.load()
+    //    <<" avg_batch:"<<(s.call_count.load()>0 ? s.total_batch.load()/s.call_count.load() : 0)
+    //    <<" total_time_us:"<<s.total_time_us.load()
+    //    <<" avg_time_us:"<<(s.call_count.load()>0 ? s.total_time_us.load()/s.call_count.load() : 0)
+    //    <<"\n";
 }
 
 void SelfPlayWorker::init() {
@@ -302,7 +322,6 @@ void DescentSearcherLocal::search_descent(const uint32 simulation_num) {
 }
 
 void DescentSearcherLocal::evaluate_descent(ubfm::Node *node) {
-    //ASSERT(!node->is_resolved());
     node->n++;
     ASSERT2(node->pos.is_ok(),{
         Tee<<node->pos<<std::endl;
@@ -312,17 +331,20 @@ void DescentSearcherLocal::evaluate_descent(ubfm::Node *node) {
         node->w = nn::NNScore(0.0);
         node->state = ubfm::NodeState::NodeDraw;
         return;
-    } 
+    }
     if (node->pos.is_lose()) {
         node->w = ubfm::score_lose(node->ply);
         node->state = ubfm::NodeState::NodeLose;
+        return;
+    }
+    if (node->is_resolved()) {
         return;
     }
     if (node->is_terminal()) {
         this->expand(node);
         this->predict(node);
         this->update_node(node);
-    } 
+    }
     auto next_node = this->next_child(node);
     if (next_node != nullptr) {
         this->evaluate_descent(next_node);
@@ -335,15 +357,18 @@ void DescentSearcherLocal::evaluate(ubfm::Node *node) {
         Tee<<node->pos<<std::endl;
     })
     ASSERT(std::fabs(node->w) <= 1);
-    
+
     if (node->pos.is_draw()) {
         node->w = nn::NNScore(0.0);
         node->state = ubfm::NodeState::NodeDraw;
         return;
-    } 
+    }
     if (node->pos.is_lose()) {
         node->w = ubfm::score_lose(node->ply);
         node->state = ubfm::NodeState::NodeLose;
+        return;
+    }
+    if (node->is_resolved()) {
         return;
     }
     if (node->is_terminal()) {
@@ -351,9 +376,9 @@ void DescentSearcherLocal::evaluate(ubfm::Node *node) {
         this->predict(node);
     } else {
         auto next_node = this->next_child(node);
-        ASSERT2(next_node != nullptr,{
-            Tee<<node->str()<<std::endl;
-        })
+        if (next_node == nullptr) {
+            return;
+        }
         this->evaluate(next_node);
     }
     this->update_node(node);
@@ -450,7 +475,7 @@ Move DescentSearcherLocal::execute_descent(game::Position &pos) {
     //this->choice_best_move_greedy();
     //this->choice_best_move_dropout();
     if (USE_DESCENT) {
-        this->add_replay_buffer(this->root_node());        
+        this->add_replay_buffer(this->root_node());
     } else {
         const auto k = hash::hash_key(this->root_node()->pos);
         const auto w = this->root_node()->w;
@@ -504,7 +529,7 @@ void DescentSearcherLocal::choice_best_move_count() {
         ASSERT(i>=0);
         ASSERT(i<this->root_node()->child_len);
         auto child = this->root_node()->child(i);
-        const auto r = 1 + cw.get(child->pos.history());
+        const auto r = 1; //+ cw.get(child->pos.history());
         scores.push_back((1 / std::sqrt(r)));
         num.push_back(r);
     }
@@ -601,59 +626,8 @@ void DescentSearcherLocal::choice_best_move_ordinal() {
 
 }
 
-void DescentSearcherLocal::choice_best_move_diff() {
-    std::vector<nn::NNScore> scores;
-    REP(i, this->root_node()->child_len) {
-        scores.push_back(nn::NNScore(0.0));
-    }
-    auto find_resolved_flag = false;
-    auto best_score = nn::NNScore(-2.0);
-    REP(i, this->root_node()->child_len) {
-        auto child = this->root_node()->child(i);
-        if (child->is_resolved()) {
-            if (child->is_lose()) {
-                REP(i, this->root_node()->child_len) {
-                    scores[i] = nn::NNScore(0.0);
-                }
-                scores[i] = ubfm::score_win(0);
-                find_resolved_flag = true;
-                break;
-            } else if (child->is_draw()) {
-                scores[i] = nn::NNScore(0.0) + (rand_double() / 1000);
-            } else if (child->is_win()) {
-                scores[i] = ubfm::score_lose(0) + (rand_double() / 1000);
-            }
-        } else {
-            scores[i] = -child->w;
-        }
-        if (scores[i] > best_score) {
-            best_score = scores[i];
-        }
-    }
-    std::vector<nn::Feature> feat_list;
-    std::vector<nn::NNScore> outputs_list;
-    feat_list.push_back(nn::feature(this->root_node()->pos));
-    model::predict(this->gpu_id, feat_list, outputs_list);
-    const auto init_score = outputs_list[0];
-    const auto diff = std::abs(best_score - init_score);
-#if DEBUG_OUT
-    for(auto i = 0; i < scores.size(); i++) {
-        Tee<<i<<":"<<scores[i]<<std::endl;
-    }
-    Tee<<"init:"<<init_score<<std::endl;
-    Tee<<"diff:"<<diff<<std::endl;
-#endif
-
-    auto index = -1;
-    if (!find_resolved_flag && std::abs(diff) > 0.3) {
-        index = my_rand(this->root_node()->child_len);
-    } else {
-        auto iter = std::max_element(scores.begin(), scores.end());
-        index = std::distance(scores.begin(), iter);
-    }
-    auto child = this->root_node()->child(index);
-    this->root_node()->best_move = child->parent_move;
-}
+// void DescentSearcherLocal::choice_best_move_diff() {
+// }
 
 void DescentSearcherLocal::choice_best_move_softmax() {
     std::vector<nn::NNScore> scores;
@@ -763,62 +737,8 @@ void DescentSearcherLocal::choice_best_move_greedy() {
     this->root_node()->best_move = child->parent_move;
 }
 
-void DescentSearcherLocal::choice_best_move_dropout() {
-
-    std::vector<std::vector<nn::NNScore>> mc_dropout_scores;
-    std::vector<nn::NNScore> scores;
-    constexpr auto SAMPLE_NUM = 32;
-    REP(i, this->root_node()->child_len) {
-        std::vector<nn::NNScore> v;
-        REP(j,SAMPLE_NUM) {
-            v.push_back(nn::NNScore(0.0));
-        }
-        mc_dropout_scores.push_back(v);
-        scores.push_back(nn::NNScore(0.0));
-    }
-
-    REP(i, SAMPLE_NUM) {
-        std::vector<nn::Feature> feat_list;
-        std::vector<nn::NNScore> outputs_list;
-        feat_list.push_back(nn::feature(this->root_node()->pos));
-        model::predict(this->gpu_id, feat_list, outputs_list);
-        REP(j, this->root_node()->child_len) {
-            auto s = outputs_list[j];
-            if (std::abs(s) < 1e-5) {
-                s = 0;
-            } else if (s > 0.999) {
-                s = 0.999;
-            } else if (s < -0.999) {
-                s = -0.999;
-            }   
-            mc_dropout_scores[j][i] = s;
-        }
-    }
-    REP(i, this->root_node()->child_len) {
-        auto child = this->root_node()->child(i);
-        scores[i] = child->n + (my_std(mc_dropout_scores[i]) * 10000) + (rand_double()/1e10);
-    }
-    REP(i, this->root_node()->child_len) {
-        auto child = this->root_node()->child(i);
-        if (child->is_resolved()) {
-            if (child->is_lose()) {
-                REP(i, this->root_node()->child_len) {
-                    scores[i] = nn::NNScore(0.0);
-                }
-                scores[i] = ubfm::score_win(0);
-                break;
-            } else if (child->is_draw()) {
-                //pass
-            } else if (child->is_win()) {
-                scores[i] = -1 + (rand_double()/1e10);
-            }
-        } 
-    }
-    auto iter = std::max_element(scores.begin(), scores.end());
-    auto index = std::distance(scores.begin(), iter);
-    auto child = this->root_node()->child(index);
-    this->root_node()->best_move = child->parent_move;
-}
+// void DescentSearcherLocal::choice_best_move_dropout() {
+// }
 
 void DescentSearcherLocal::selfplay() {
     Tee<<"start selfplay\n";
@@ -853,22 +773,22 @@ void DescentSearcherLocal::selfplay() {
                 this->replay_buffer.close();
                 break;
             }
-            this->po_num = 25;
-            
+            this->po_num = 100;
+
             auto best_move = execute_descent(pos);
-           
-            this->cw.update(pos.history());
+
+            //this->cw.update(pos.history());
 
             // if (!attack::in_checked(pos)) {
             //     const auto mate_move = mate::mate_search(pos,5);
             //     if (mate_move != MOVE_NONE) {
             //         best_move = mate_move;
             //     }
-            // } 
+            // }
             pos = pos.next(best_move);
         }
         if (i % 100 == 0) {
-            this->cw.dump();
+            //this->cw.dump();
         }
         if (this->thread_id == 0 && i % 100 == 0) {
             Tee<<g_selfplay_info.str();

@@ -35,7 +35,7 @@ def evaluate_problem():
     # ベストプレイヤーのモデルの読み込み
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = SingleNet()
-    model.load_state_dict(torch.load('./model/best_single.h5'))
+    model.load_state_dict(torch.load('./model/best_single.h5', weights_only=True))
     model = model.to(device)
     model.eval()
 
@@ -56,12 +56,12 @@ def evaluate_problem():
             score = -1
         else:
             score = 0
-        if state.is_lose():
-            score = -1
-        elif state.is_draw():
-            score = 0
-        elif state.is_win():
-            score = 1
+        # if state.is_lose():
+        #     score = -1
+        # elif state.is_draw():
+        #     score = 0
+        # elif state.is_win():
+        #     score = 1
 
         if score == result:
             correct_num += 1
@@ -72,7 +72,6 @@ def evaluate_problem():
         #    print("result:",result)
     message = "ans:",correct_num/len(problem_list),f"({correct_num})/({len(problem_list)})"
     print(message)
-    notify_line(message)
     return correct_num/len(problem_list)   
     
     

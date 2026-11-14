@@ -17,6 +17,8 @@
 
 namespace ubfm {
 
+inline bool g_use_batch_predict = false;
+
 enum NodeState : int {
     NodeDraw = 0,
     NodeWin = 1,
@@ -196,6 +198,7 @@ public:
     void choice_best_move();
 
     int THREAD_NUM;
+    int SIMULATION_NUM = 2000;
 protected:
     std::vector<UBFMSearcherLocal> worker;
 };
@@ -276,7 +279,7 @@ void UBFMSearcherGlobal::choice_best_move() {
 
 void UBFMSearcherLocal::run() {
 	this->thread = new std::thread([this]() {
-        this->search(int(2000 / this->global->THREAD_NUM));
+        this->search(int(this->global->SIMULATION_NUM / this->global->THREAD_NUM));
     });
 }
 void UBFMSearcherLocal::join() {
@@ -378,7 +381,11 @@ void UBFMSearcherLocal::predict(Node *node) {
         auto &pos = child->pos;
         feat_list.push_back(nn::feature(pos));
     }
-    model::predict(this->gpu_id, feat_list, outputs_list);
+    if (g_use_batch_predict) {
+        model::predict_batched(this->gpu_id, feat_list, outputs_list);
+    } else {
+        model::predict(this->gpu_id, feat_list, outputs_list);
+    }
     
     REP(i, node->child_len) {
         auto state = NodeUnknown;

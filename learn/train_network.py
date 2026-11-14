@@ -43,7 +43,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
         checkpoint_list.sort(key=lambda s: int(re.search(r'\d+', s).group()))
         #print(checkpoint_list)
         path = checkpoint_list[-1]
-        checkpoint = torch.load(path, map_location=device)
+        checkpoint = torch.load(path, map_location=device, weights_only=True)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         iterate = checkpoint['iterate'] + 1
@@ -70,8 +70,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
             outputs = model(x)
             outputs = torch.squeeze(outputs)
             
-            #loss =  (LAMBDA * torch.sum((outputs - y0) ** 2)) + ((1 - LAMBDA) * torch.sum((outputs - y1) ** 2))
-            loss =  torch.sum((outputs - y0) ** 2)
+            loss =  (LAMBDA * torch.sum((outputs - y0) ** 2)) + ((1 - LAMBDA) * torch.sum((outputs - y1) ** 2))
 
             loss.backward()
             optimizer.step()

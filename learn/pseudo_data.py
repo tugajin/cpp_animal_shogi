@@ -13,7 +13,7 @@ def random_state():
 def preudo_data():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = SingleNet()
-    model.load_state_dict(torch.load('./model/best_single.h5'))
+    model.load_state_dict(torch.load('./model/best_single.h5', weights_only=True))
     model = model.to(device)
     model.eval()
     output_list = []

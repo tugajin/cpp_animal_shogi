@@ -22,14 +22,15 @@ set_target_properties(onnxruntime PROPERTIES
 )
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O0 -pg -DDEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE "-O2 -g -DNDEBUG -march=native -fsanitize=thread")
-#set(CMAKE_CXX_FLAGS_RELEASE "-O3 -s -DNDEBUG -march=native")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -g -fno-stack-protector -DNDEBUG -march=native")
+set(CMAKE_CXX_FLAGS_ASAN "-g3 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DDEBUG -march=native")
 
 # Create Executable File
 add_executable(${PROJECT_NAME} main.cpp)
 target_compile_options(${PROJECT_NAME} PUBLIC -Wall -Wextra)
 target_link_libraries(${PROJECT_NAME} onnxruntime)
-target_link_libraries(${PROJECT_NAME} "-pthread" "-fsanitize=thread" "-B/usr/lib/gcc/x86_64-linux-gnu/13")
+target_link_libraries(${PROJECT_NAME} "-pthread" "-B/usr/lib/gcc/x86_64-linux-gnu/13")
 
 # Find libonnxruntime.so at runtime without LD_LIBRARY_PATH
 set_target_properties(${PROJECT_NAME} PROPERTIES

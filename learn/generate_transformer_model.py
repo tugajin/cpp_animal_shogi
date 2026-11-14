@@ -67,7 +67,7 @@ class TransformerModel(nn.Module):
 
 def conv_jit():
     model = TransformerModel()
-    model.load_state_dict(torch.load('./model/best_single.h5'))
+    model.load_state_dict(torch.load('./model/best_single.h5', weights_only=True))
     model.eval()
     sm = torch.jit.script(model)
     sm.save("./model/best_single_jit.pt")

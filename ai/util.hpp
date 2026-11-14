@@ -95,8 +95,12 @@ public:
 		return *this;
 	}
 	TeeStream& operator <<(std::ostream& (*f)(std::ostream&)) {
-		std::cout << f;
-		ofs_ << f;
+		if (level_ == 1) {
+			lock_.lock();
+			std::cout << f;
+			ofs_ << f;
+			lock_.unlock();
+		}
 		return *this;
 	}
 
