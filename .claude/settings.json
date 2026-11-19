@@ -6,7 +6,8 @@
       "Edit(*)",
       "Write(*)",
       "Skill(update-config)",
-      "Skill(update-config:*)"
+      "Skill(update-config:*)",
+      "Bash(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits)"
     ]
   }
 }

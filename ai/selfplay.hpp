@@ -308,16 +308,19 @@ void DescentSearcherLocal::run_descent() {
     });
 }
 void DescentSearcherLocal::search_descent(const uint32 simulation_num) {
-    for(auto i = 0u ;; ++i) {
-#if DEBUG_OUT
-        Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
-#endif
-        const auto interrupt = this->interrupt_descent(i, simulation_num);
-        if (interrupt) {
-            break;
+    for (auto i = 0u;;) {
+        if (this->interrupt_descent(i, simulation_num)) break;
+
+        std::vector<ubfm::VLLeafInfo> leaves;
+        for (int b = 0; b < VL_BATCH_SIZE; b++) {
+            if (this->root_node()->is_resolved()) break;
+            leaves.push_back(this->select_leaf_vl(this->root_node()));
         }
-        (USE_DESCENT) ? this->evaluate_descent(this->root_node()) 
-                      : this->evaluate(this->root_node());
+        if (leaves.empty()) break;
+
+        this->predict_batch_leaves(leaves);
+        this->backup_vl(leaves);
+        i += static_cast<uint32>(leaves.size());
     }
 }
 
@@ -511,7 +514,7 @@ void DescentSearcherLocal::choice_best_move_e_greedy() {
         }
     }
     auto index = -1;
-    if (!find_resolved_flag && rand_double() < 0.2) {
+    if (!find_resolved_flag && rand_double() < 0.1) {
         index = my_rand(this->root_node()->child_len);
     } else {
         auto iter = std::max_element(scores.begin(), scores.end());
@@ -744,7 +747,11 @@ void DescentSearcherLocal::selfplay() {
     Tee<<"start selfplay\n";
     for(auto i = 0; !g_selfplay_info.is_end() ; i++) {
         game::Position pos;
-        pos = hash::hirate();
+        if (rand_double() < 0.5) {
+            pos = generate_random_position();
+        } else {
+            pos = hash::hirate();
+        }
         this->replay_buffer.open();
         while(true) {
 #if DEBUG_OUT

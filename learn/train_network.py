@@ -21,7 +21,7 @@ from evaluate_network import *
 # パラメータの準備
 RN_EPOCHS = 15 # 学習回数
 RN_BATCH_SIZE = 128 # バッチサイズ
-LAMBDA = 0.7
+LAMBDA = 0.5
 
 # ネットワークの学習
 def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None):
@@ -29,7 +29,7 @@ def train_network(epoch_num=RN_EPOCHS, batch_size=RN_BATCH_SIZE, path_list=None)
     iterate = 0
 
     if path_list is None:
-        path_list = Path('./data').glob('*.json')
+        path_list = Path('./data').rglob('*.json')
         
     # ベストプレイヤーのモデルの読み込み
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

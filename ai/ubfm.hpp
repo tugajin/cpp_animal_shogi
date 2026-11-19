@@ -42,6 +42,7 @@ public:
              w(0.0),
              init_w(0.0),
              n(0),
+             vl(0),
              child_len(-1),
              ply(-1){}
    Node( const Node & ) = delete ;
@@ -50,6 +51,7 @@ public:
     void init() {
         this->w = this->init_w = 0.0;
         this->n = 0;
+        this->vl = 0;
         this->parent_move = this->best_move = MOVE_NONE;
         this->child_len = -1;
         this->child_nodes = nullptr;
@@ -150,14 +152,21 @@ public:
     nn::NNScore w;
     nn::NNScore init_w;
     int n;
+    int vl;
     int child_len;
     int ply;
 };
+struct VLLeafInfo {
+    Node *leaf;
+    std::vector<Node*> path;
+    bool needs_predict;
+};
+
 class UBFMSearcherGlobal;
 
 class UBFMSearcherLocal {
 public:
-    UBFMSearcherLocal(int id, int gpu_id, UBFMSearcherGlobal * global) : 
+    UBFMSearcherLocal(int id, int gpu_id, UBFMSearcherGlobal * global) :
                      global(global),
                      thread(nullptr),
                      thread_id(id),
@@ -174,9 +183,15 @@ protected:
     void predict(Node *node);
     void expand(Node *node);
     Node *next_child(const Node *node) const;
+    Node *next_child_vl(const Node *node) const;
     void update_node(Node *node);
     bool interrupt(const uint32 current_num, const uint32 simulation_num) const;
     Node *root_node() const ;
+    VLLeafInfo select_leaf_vl(Node *root);
+    void predict_batch_leaves(std::vector<VLLeafInfo> &leaves);
+    void backup_vl(std::vector<VLLeafInfo> &leaves);
+    static constexpr int VL_BATCH_SIZE = 8;
+    static constexpr double VL_WEIGHT = 0.5;
 
     UBFMSearcherGlobal *global;
     std::thread *thread;
@@ -298,18 +313,21 @@ bool UBFMSearcherLocal::interrupt(const uint32 current_num, const uint32 simulat
 }
 
 void UBFMSearcherLocal::search(const uint32 simulation_num) {
-    
+
     const auto is_out = (this->thread_id == 0) && (this->gpu_id == 0);
-    for(auto i = 0u ;; ++i) {
-        //Tee<<"start simulation:" << i <<"/"<<simulation_num<<"\r";
-        const auto interrupt = this->interrupt(i, simulation_num);
-        if (interrupt) {
-            break;
+    for (auto i = 0u;;) {
+        if (this->interrupt(i, simulation_num)) break;
+
+        std::vector<VLLeafInfo> leaves;
+        for (int b = 0; b < VL_BATCH_SIZE; b++) {
+            if (this->root_node()->is_resolved()) break;
+            leaves.push_back(this->select_leaf_vl(this->root_node()));
         }
-        this->evaluate(this->root_node());
-        if (/*is_out*/false) {
-            Tee<<this->root_node()->str()<<std::endl;
-        }
+        if (leaves.empty()) break;
+
+        this->predict_batch_leaves(leaves);
+        this->backup_vl(leaves);
+        i += static_cast<uint32>(leaves.size());
     }
     if (is_out) {
         Tee<<this->root_node()->str()<<std::endl;
@@ -537,6 +555,171 @@ void UBFMSearcherLocal::update_node(Node *node) {
     }
     node->w = -best_child->w;
     node->best_move = best_child->parent_move;
+}
+
+Node *UBFMSearcherLocal::next_child_vl(const Node *node) const {
+    ASSERT(node->child_len >= 0);
+    Node *best_child = nullptr;
+    nn::NNScore best_score = nn::NNScore(-10000);
+    auto min_num = INT32_MAX;
+    REP(i, node->child_len) {
+        auto child = node->child(i);
+        ASSERT(std::fabs(child->w) <= 1);
+        if (child->is_resolved()) { continue; }
+        const auto score = -child->w
+                         - nn::NNScore(child->vl * VL_WEIGHT)
+                         + static_cast<nn::NNScore>(rand_gaussian(0.0, 0.2));
+        if (score > best_score) {
+            best_score = score;
+            min_num = child->n;
+            best_child = child;
+        } else if (score == best_score) {
+            if (child->n < min_num) {
+                min_num = child->n;
+                best_child = child;
+            }
+        }
+    }
+    return best_child;
+}
+
+VLLeafInfo UBFMSearcherLocal::select_leaf_vl(Node *root) {
+    VLLeafInfo info;
+    info.needs_predict = false;
+    auto *node = root;
+
+    while (true) {
+        node->lock_node.lock();
+        info.path.push_back(node);
+        node->vl++;
+
+        if (node->pos.is_draw()) {
+            node->w = nn::NNScore(0.0);
+            node->state = NodeState::NodeDraw;
+            node->lock_node.unlock();
+            info.leaf = node;
+            return info;
+        }
+        if (node->pos.is_lose()) {
+            node->w = score_lose(node->ply);
+            node->state = NodeState::NodeLose;
+            node->lock_node.unlock();
+            info.leaf = node;
+            return info;
+        }
+        if (node->is_resolved()) {
+            node->lock_node.unlock();
+            info.leaf = node;
+            return info;
+        }
+        if (node->is_terminal()) {
+            this->expand(node);
+            info.needs_predict = true;
+            info.leaf = node;
+            node->lock_node.unlock();
+            return info;
+        }
+        auto *next = this->next_child_vl(node);
+        node->lock_node.unlock();
+        if (next == nullptr) {
+            info.leaf = node;
+            return info;
+        }
+        node = next;
+    }
+}
+
+void UBFMSearcherLocal::predict_batch_leaves(std::vector<VLLeafInfo> &leaves) {
+    std::vector<nn::Feature> all_features;
+    std::vector<std::pair<size_t, int>> ranges;
+
+    for (auto &info : leaves) {
+        if (!info.needs_predict) continue;
+        auto *node = info.leaf;
+        ASSERT(node->child_len > 0);
+        size_t start = all_features.size();
+        REP(i, node->child_len) {
+            auto child = node->child(i);
+            all_features.push_back(nn::feature(child->pos));
+        }
+        ranges.push_back({start, node->child_len});
+    }
+
+    if (all_features.empty()) return;
+
+    std::vector<nn::NNScore> all_outputs;
+    if (g_use_batch_predict) {
+        model::predict_batched(this->gpu_id, all_features, all_outputs);
+    } else {
+        model::predict(this->gpu_id, all_features, all_outputs);
+    }
+
+    size_t range_idx = 0;
+    for (auto &info : leaves) {
+        if (!info.needs_predict) continue;
+        auto *node = info.leaf;
+        auto [start, child_count] = ranges[range_idx++];
+
+        REP(i, child_count) {
+            auto child = node->child(i);
+            auto score = all_outputs[start + static_cast<size_t>(i)];
+            auto state = NodeUnknown;
+
+            if (score >= nn::NNScore(1.0)) {
+                score = nn::NNScore(0.8999);
+            } else if (score <= nn::NNScore(-1.0)) {
+                score = nn::NNScore(-0.8999);
+            }
+
+            auto &pos = child->pos;
+            if (pos.is_draw()) {
+                score = nn::NNScore(0.0);
+                state = NodeDraw;
+            } else if (pos.is_lose()) {
+                score = score_lose(child->ply);
+                state = NodeLose;
+            } else if (pos.is_win()) {
+                score = score_win(child->ply);
+                state = NodeWin;
+            }
+#if 1
+            else if (!attack::in_checked(pos)) {
+                const auto move = mate::mate_search(pos, 5);
+                if (move != MOVE_NONE) {
+                    score = score_win(child->ply);
+                    state = NodeWin;
+                }
+            } else {
+                const auto move = mate::mated_search(pos, 4);
+                if (move == MOVE_NONE) {
+                    score = score_lose(child->ply);
+                    state = NodeLose;
+                }
+            }
+#endif
+            child->w = child->init_w = score;
+            child->state = state;
+        }
+    }
+}
+
+void UBFMSearcherLocal::backup_vl(std::vector<VLLeafInfo> &leaves) {
+    for (auto &info : leaves) {
+        for (auto *node : info.path) {
+            node->lock_node.lock();
+            node->vl--;
+            node->n++;
+            node->lock_node.unlock();
+        }
+        for (int i = static_cast<int>(info.path.size()) - 1; i >= 0; i--) {
+            auto *node = info.path[static_cast<size_t>(i)];
+            node->lock_node.lock();
+            if (node->child_len > 0) {
+                this->update_node(node);
+            }
+            node->lock_node.unlock();
+        }
+    }
 }
 
 void test_ubfm() {
