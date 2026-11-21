@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 def main():
-    json_list = list(Path('./data').glob('*.json'))
+    json_list = list(Path('./data').rglob('*.json'))  # gen_N/ 配下も対象（実験4の世代別蓄積対応）
     pos_dict = {}
     num = 0
     for path in json_list:

@@ -47,6 +47,9 @@ public:
     void push_back(const Key hash, const nn::NNScore sc) {
         info.push_back({{"p", hash},{"s", sc},{"r", -99}});
     }
+    void push_back(const Key hash, const nn::NNScore sc, const int cn) {
+        info.push_back({{"p", hash},{"s", sc},{"r", -99},{"c", cn}});
+    }
     void overwrite_result(double result) {
         if (USE_DESCENT) { return; }
         for(auto &item :this->info) {
@@ -311,10 +314,25 @@ void DescentSearcherLocal::search_descent(const uint32 simulation_num) {
     for (auto i = 0u;;) {
         if (this->interrupt_descent(i, simulation_num)) break;
 
+        // CN 探索時はバッチ前に木全体の共謀数を計算し直す（木は数百ノード規模なので安い）。
+        // 根の CN が CN_INF（証明済み級）の間は共謀が存在しないため通常選択に任せる。
+        auto cn_ok = false;
+        if (ubfm::g_use_cn_search) {
+            ubfm::compute_cn(this->root_node());
+            cn_ok = ubfm::root_category_cn(this->root_node()) < ubfm::CN_INF;
+        }
         std::vector<ubfm::VLLeafInfo> leaves;
         for (int b = 0; b < VL_BATCH_SIZE; b++) {
             if (this->root_node()->is_resolved()) break;
-            leaves.push_back(this->select_leaf_vl(this->root_node()));
+            if (cn_ok) {
+                auto info = this->select_leaf_cn(this->root_node());
+                if (info.leaf == nullptr) {
+                    info = this->select_leaf_vl(this->root_node());
+                }
+                leaves.push_back(info);
+            } else {
+                leaves.push_back(this->select_leaf_vl(this->root_node()));
+            }
         }
         if (leaves.empty()) break;
 
@@ -482,7 +500,14 @@ Move DescentSearcherLocal::execute_descent(game::Position &pos) {
     } else {
         const auto k = hash::hash_key(this->root_node()->pos);
         const auto w = this->root_node()->w;
-        this->replay_buffer.push_back(k,w);
+        if (ubfm::g_use_cn_search) {
+            // 最終的な木から根のカテゴリ共謀数を注釈する（CN_INF は -1 で記録 = 証明済み級）
+            ubfm::compute_cn(this->root_node());
+            const auto cn = ubfm::root_category_cn(this->root_node());
+            this->replay_buffer.push_back(k, w, cn >= ubfm::CN_INF ? -1 : cn);
+        } else {
+            this->replay_buffer.push_back(k,w);
+        }
     }
    return this->root_node()->best_move;
 }

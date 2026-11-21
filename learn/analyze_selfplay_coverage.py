@@ -79,16 +79,26 @@ def main():
     model = model.to(device)
     model.eval()
 
-    # オラクルをセットとして読み込む（二分探索用）
+    # オラクルをソート済み配列として読み込み、二分探索（np.searchsorted）で照合する
+    # ※ 旧実装は 1.97億件を Python の set 化しており、メモリを大量消費していた。
+    #   analyze_frequent.py の load_oracle_sorted / in_sorted と同じ方式に統一。
     print("オラクル読み込み中...")
-    win_keys = set(load_oracle_keys(f"{DATA_DIR}/win.dat", 196773087).tolist())
-    lose_keys = set(load_oracle_keys(f"{DATA_DIR}/lose.dat", 47347380).tolist())
-    draw_keys = set(load_oracle_keys(f"{DATA_DIR}/draw.dat", 2682700).tolist())
-    print(f"  win: {len(win_keys):,}  lose: {len(lose_keys):,}  draw: {len(draw_keys):,}")
+    win_arr = load_oracle_keys(f"{DATA_DIR}/win.dat", 196773087)
+    win_arr.sort()
+    lose_arr = load_oracle_keys(f"{DATA_DIR}/lose.dat", 47347380)
+    lose_arr.sort()
+    draw_arr = load_oracle_keys(f"{DATA_DIR}/draw.dat", 2682700)
+    draw_arr.sort()
+
+    def in_sorted(arr, val):
+        idx = np.searchsorted(arr, np.uint64(val))
+        return idx < len(arr) and arr[idx] == np.uint64(val)
+
+    print(f"  win: {len(win_arr):,}  lose: {len(lose_arr):,}  draw: {len(draw_arr):,}")
 
     # 自己対局データを読む
     print("\n自己対局データ読み込み中...")
-    json_files = sorted(glob.glob('data/*.json'))
+    json_files = sorted(glob.glob('data/**/*.json', recursive=True))  # gen_N/ 配下も対象（実験4の世代別蓄積対応）
     selfplay_entries = []
     for jf in json_files:
         with open(jf) as fh:
@@ -106,11 +116,11 @@ def main():
     for entry in selfplay_entries:
         k = entry["p"]
         selfplay_keys.append(k)
-        if k in win_keys:
+        if in_sorted(win_arr, k):
             oracle_results["win"] += 1
-        elif k in lose_keys:
+        elif in_sorted(lose_arr, k):
             oracle_results["lose"] += 1
-        elif k in draw_keys:
+        elif in_sorted(draw_arr, k):
             oracle_results["draw"] += 1
         else:
             oracle_results["unknown"] += 1
@@ -130,11 +140,11 @@ def main():
         state = from_hash(k)
         if state.pos.is_win() or state.pos.is_lose():
             continue
-        if k in win_keys:
+        if in_sorted(win_arr, k):
             oracle = 1
-        elif k in lose_keys:
+        elif in_sorted(lose_arr, k):
             oracle = -1
-        elif k in draw_keys:
+        elif in_sorted(draw_arr, k):
             oracle = 0
         else:
             oracle = None

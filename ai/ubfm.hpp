@@ -18,6 +18,7 @@
 namespace ubfm {
 
 inline bool g_use_batch_predict = false;
+inline bool g_use_cn_search = true;  // true で葉選択を共謀数（CN）基準にする（生成実験用）
 
 enum NodeState : int {
     NodeDraw = 0,
@@ -44,7 +45,8 @@ public:
              n(0),
              vl(0),
              child_len(-1),
-             ply(-1){}
+             ply(-1),
+             cn_cost{1, 0, 0, 1}{}
    Node( const Node & ) = delete ;
    Node & operator = ( const Node & ) = delete ;
    Node & operator = ( const Node && n) = delete;
@@ -57,6 +59,10 @@ public:
         this->child_nodes = nullptr;
         this->ply = 0;
         this->state = NodeUnknown;
+        this->cn_cost[0] = 1;
+        this->cn_cost[1] = 0;
+        this->cn_cost[2] = 0;
+        this->cn_cost[3] = 1;
     }
     bool is_resolved() const {
         return state != NodeUnknown;
@@ -155,7 +161,71 @@ public:
     int vl;
     int child_len;
     int ply;
+    // 共謀数（compute_cn が書く）: [0]=GE(+0.2) [1]=LE(+0.2) [2]=GE(-0.2) [3]=LE(-0.2)
+    // 初期値は w=0 の葉としての値（GE(+τ)=1, LE(+τ)=0, GE(-τ)=0, LE(-τ)=1）
+    int cn_cost[4];
 };
+
+// ---- 共謀数（カテゴリ境界 ±0.2 に対する threshold conspiracy number） ----
+// GE(τ): そのノードの値を τ より大きくするために必要な「葉評価の変更」の最小数
+// LE(τ): そのノードの値を τ より小さくするために必要な「葉評価の変更」の最小数
+// 葉は未展開・未解決ノードで変更コスト 1。解決済みノードは葉の変更では動かない（CN_INF）。
+// 内部ノードは w = max_i(-子.w) なので、
+//   GE(τ) = min_i LE_i(-τ) / LE(τ) = Σ_i GE_i(-τ) と再帰する。
+static constexpr double CN_TAU = 0.2;
+static constexpr int CN_INF = 1 << 28;
+
+inline int cn_add_cap(const int a, const int b) {
+    const long v = static_cast<long>(a) + static_cast<long>(b);
+    return v >= CN_INF ? CN_INF : static_cast<int>(v);
+}
+
+inline void compute_cn(Node *node) {
+    const auto w = node->w;
+    if (node->is_resolved()) {
+        node->cn_cost[0] = (w >  CN_TAU) ? 0 : CN_INF;
+        node->cn_cost[1] = (w <  CN_TAU) ? 0 : CN_INF;
+        node->cn_cost[2] = (w > -CN_TAU) ? 0 : CN_INF;
+        node->cn_cost[3] = (w < -CN_TAU) ? 0 : CN_INF;
+        return;
+    }
+    if (node->is_terminal()) {
+        node->cn_cost[0] = (w >  CN_TAU) ? 0 : 1;
+        node->cn_cost[1] = (w <  CN_TAU) ? 0 : 1;
+        node->cn_cost[2] = (w > -CN_TAU) ? 0 : 1;
+        node->cn_cost[3] = (w < -CN_TAU) ? 0 : 1;
+        return;
+    }
+    auto ge_p = CN_INF;  // GE(+τ) = min_i LE_i(-τ)
+    auto ge_m = CN_INF;  // GE(-τ) = min_i LE_i(+τ)
+    auto le_p = 0;       // LE(+τ) = Σ_i GE_i(-τ)
+    auto le_m = 0;       // LE(-τ) = Σ_i GE_i(+τ)
+    REP(i, node->child_len) {
+        auto child = node->child(i);
+        compute_cn(child);
+        ge_p = std::min(ge_p, child->cn_cost[3]);
+        ge_m = std::min(ge_m, child->cn_cost[1]);
+        le_p = cn_add_cap(le_p, child->cn_cost[2]);
+        le_m = cn_add_cap(le_m, child->cn_cost[0]);
+    }
+    node->cn_cost[0] = ge_p;
+    node->cn_cost[1] = le_p;
+    node->cn_cost[2] = ge_m;
+    node->cn_cost[3] = le_m;
+}
+
+// 根のカテゴリ（win/draw/lose）を変えるのに必要な葉評価の変更数。
+// 前提: compute_cn(root) 済み。CN_INF は「葉をどう変えてもカテゴリは変わらない（証明済み級）」。
+inline int root_category_cn(const Node *root) {
+    if (root->w > CN_TAU) {
+        return root->cn_cost[1];
+    }
+    if (root->w < -CN_TAU) {
+        return root->cn_cost[2];
+    }
+    return std::min(root->cn_cost[0], root->cn_cost[3]);
+}
+
 struct VLLeafInfo {
     Node *leaf;
     std::vector<Node*> path;
@@ -184,6 +254,7 @@ protected:
     void expand(Node *node);
     Node *next_child(const Node *node) const;
     Node *next_child_vl(const Node *node) const;
+    VLLeafInfo select_leaf_cn(Node *root);
     void update_node(Node *node);
     bool interrupt(const uint32 current_num, const uint32 simulation_num) const;
     Node *root_node() const ;
@@ -625,6 +696,98 @@ VLLeafInfo UBFMSearcherLocal::select_leaf_vl(Node *root) {
             info.leaf = node;
             return info;
         }
+        node = next;
+    }
+}
+
+// 共謀数による葉選択: 根のカテゴリを変える最小共謀（葉の集合）に属する葉を1つ選ぶ。
+// 前提: compute_cn(root) 済み（cn_cost はバッチ開始時点の値。バッチ内の展開は次バッチで反映される）。
+// 共謀を辿れない場合は info.leaf == nullptr を返し、呼び出し側が select_leaf_vl にフォールバックする。
+VLLeafInfo UBFMSearcherLocal::select_leaf_cn(Node *root) {
+    VLLeafInfo info;
+    info.needs_predict = false;
+    info.leaf = nullptr;
+    // 根の目標方向: kind 0=GE / 1=LE、sign +1 は τ=+0.2、-1 は τ=-0.2
+    int kind, sign;
+    if (root->w > CN_TAU) {
+        kind = 1; sign = +1;          // 勝ちカテゴリから落とす共謀
+    } else if (root->w < -CN_TAU) {
+        kind = 0; sign = -1;          // 負けカテゴリから上げる共謀
+    } else if (root->cn_cost[0] <= root->cn_cost[3]) {
+        kind = 0; sign = +1;          // draw から勝ちへ抜ける方が安い
+    } else {
+        kind = 1; sign = -1;          // draw から負けへ落ちる方が安い
+    }
+    auto *node = root;
+    while (true) {
+        node->lock_node.lock();
+        info.path.push_back(node);
+        node->vl++;
+
+        if (node->pos.is_draw()) {
+            node->w = nn::NNScore(0.0);
+            node->state = NodeState::NodeDraw;
+            node->lock_node.unlock();
+            info.leaf = node;
+            return info;
+        }
+        if (node->pos.is_lose()) {
+            node->w = score_lose(node->ply);
+            node->state = NodeState::NodeLose;
+            node->lock_node.unlock();
+            info.leaf = node;
+            return info;
+        }
+        if (node->is_resolved()) {
+            node->lock_node.unlock();
+            info.leaf = node;
+            return info;
+        }
+        if (node->is_terminal()) {
+            this->expand(node);
+            info.needs_predict = true;
+            info.leaf = node;
+            node->lock_node.unlock();
+            return info;
+        }
+        Node *next = nullptr;
+        auto best = CN_INF;
+        if (kind == 0) {
+            // GE(sign·τ): LE_child(-sign·τ) が最小の子へ（子の目標は LE(-sign·τ)）
+            const auto idx = (sign > 0) ? 3 : 1;
+            REP(i, node->child_len) {
+                auto child = node->child(i);
+                if (child->cn_cost[idx] < best) {
+                    best = child->cn_cost[idx];
+                    next = child;
+                }
+            }
+        } else {
+            // LE(sign·τ): GE_child(-sign·τ) が正で最小の子へ（子の目標は GE(-sign·τ)）
+            const auto idx = (sign > 0) ? 2 : 0;
+            REP(i, node->child_len) {
+                auto child = node->child(i);
+                const auto c = child->cn_cost[idx];
+                if (c > 0 && c < best) {
+                    best = c;
+                    next = child;
+                }
+            }
+        }
+        node->lock_node.unlock();
+        if (next == nullptr || best >= CN_INF) {
+            // 共謀を辿れない: vl を巻き戻して失敗を返す
+            for (auto *p : info.path) {
+                p->lock_node.lock();
+                p->vl--;
+                p->lock_node.unlock();
+            }
+            info.path.clear();
+            info.leaf = nullptr;
+            return info;
+        }
+        kind = 1 - kind;
+        sign = -sign;
         node = next;
     }
 }

@@ -41,7 +41,7 @@ def main():
 
     # 自己対局データを読む
     print("\n自己対局データ読み込み中...")
-    json_files = sorted(glob.glob('data/*.json'))
+    json_files = sorted(glob.glob('data/**/*.json', recursive=True))  # gen_N/ 配下も対象（実験4の世代別蓄積対応）
     entries = []
     for jf in json_files:
         with open(jf) as fh:
