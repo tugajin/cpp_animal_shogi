@@ -18,7 +18,7 @@
 namespace ubfm {
 
 inline bool g_use_batch_predict = false;
-inline bool g_use_cn_search = true;  // true で葉選択を共謀数（CN）基準にする（生成実験用）
+inline bool g_use_cn_search = false;  // true で葉選択を共謀数（CN）基準にする（生成実験用）
 
 enum NodeState : int {
     NodeDraw = 0,

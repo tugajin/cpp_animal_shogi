@@ -6,7 +6,9 @@
 #include <thread>
 #include <atomic>
 #include <fstream>
+#include <sstream>
 #include <filesystem>
+#include <unordered_map>
 #include "nlohmann/json.hpp"
 #include "util.hpp"
 #include "common.hpp"
@@ -34,7 +36,13 @@ public:
     void open() {
         this->info.clear();
         std::filesystem::create_directory("data");
-        auto base = "./data/selfplay_" + timestamp() + "_" + to_string(my_rand(9999));
+        // ファイル名の衝突防止: timestamp は秒精度、my_rand(9999) も狭いため、
+        // 12 ワーカーが同時刻に同じ接尾辞を引くと .tmp を共有してしまい、
+        // 片方の close() の rename が失敗して落ちる（2026-11-21 arm0 gen_2 で発生）。
+        // プロセス内で単調増加するカウンタを付けて衝突自体を無くす。
+        static std::atomic<int> file_counter{0};
+        auto base = "./data/selfplay_" + timestamp() + "_" + to_string(my_rand(9999))
+            + "_" + to_string(file_counter++);
         this->tmp_path = base + ".tmp";
         this->final_path = base + ".json";
         this->ofs.open(this->tmp_path);
@@ -77,6 +85,8 @@ public:
     static constexpr int NUM = 12;
 #endif
     void run_descent();
+    void run_probe();
+    void run_dump();
     void join();
     void init();
 private:
@@ -89,6 +99,8 @@ public:
     ubfm::UBFMSearcherLocal(id, gpu_id, selfplay) {
     }
     void run_descent();
+    void run_probe();
+    void run_dump();
     void search_descent(const uint32 simulation_num);
     void selfplay();
     void bishop_learning();
@@ -98,6 +110,10 @@ private:
     void evaluate_descent(ubfm::Node *node);
     void evaluate(ubfm::Node *node);
     Move execute_descent(game::Position &pos);
+    void probe_loop();
+    void dump_loop();
+    ubfm::Node *probe_search(game::Position &pos);
+    ubfm::Node *choice_best_move_probe();
     bool interrupt_descent(const uint32 current_num, const uint32 simulation_num) const;
     void add_replay_buffer(ubfm::Node *node);
     void choice_best_move_e_greedy();
@@ -189,6 +205,41 @@ extern SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
 extern int g_thread_counter;
 extern SelfPlayInfo g_selfplay_info;
 
+// probe モード（学習なしの探索測定、2026-11-22 追加）:
+// 固定局面リストに対して生成時と同じ探索（po_num=100）を ε=0 で回し、
+// root 値と選択した子局面のキーを返す。モデルを差し替えて同じリストを
+// 測ることで「モデル＋探索」の出力を oracle と比較できる。
+// g_probe_items は全ワーカーで共有するが、各ワーカーは自分の担当
+// インデックス（thread_id 起点のストライド）だけを書くのでロックは不要。
+struct ProbeItem {
+    Key key = 0;
+    double root_w = 0.0;
+    Key child_key = 0;
+    int ok = 0;
+};
+extern std::vector<ProbeItem> g_probe_items;
+extern int g_probe_po;
+void execute_probe(const std::string &keys_path, const int po_num);
+
+// dump モード（予算の蒸留用、2026-11-23 追加）:
+// 固定局面リストに対して浅い探索（po_num 回）を回し、探索木そのものを
+// テキストで書き出す。学習側（train_distill.py）は木の葉を学習中モデルで
+// 評価し直し、backup した root 値を深い探索の教師に合わせる。
+// ノードの値（w）は update_node の規則により「子の符号反転の最大」と
+// 常に一致する（解決済みの子がいても、値だけ見れば plain な negamax max
+// になることを ubfm.hpp の update_node で確認済み）。そのため学習側は
+// state を見ずに max だけで backup を再現できる。検証は train_distill.py
+// の --verify（ダンプした葉の値を入れると root_w が再現されること）。
+struct DumpItem {
+    Key key = 0;
+    std::string text;
+    int ok = 0;
+};
+extern std::vector<DumpItem> g_dump_items;
+extern int g_dump_po;
+void execute_dump(const std::string &keys_path, const int po_num,
+                  const std::string &out_path);
+
 game::Position generate_random_position() {
     while (1) {
         ColorPiece pieces[SQUARE_SIZE] = {
@@ -255,12 +306,39 @@ game::Position generate_random_position() {
     }
 }
 
+// 実行時の探索パラメータを1行で標準出力する（Tee 経由で log.log にも残る）。
+// 生成データの出自（どの設定で作られたか）を後からログで検証できるようにするため、
+// execute_selfplay の開始時に必ず出す。grep の目印は行頭の "PARAMS "。
+// 参照できる定数は直接参照し、コード中にリテラルで散っているものは出典を併記する。
+// リテラル側を変更したらこの行も合わせること。
+void print_search_params(const int num) {
+    Tee<<"PARAMS"
+       <<" games="<<num
+       <<" workers="<<SelfPlayWorker::NUM
+       <<" use_descent="<<(USE_DESCENT ? 1 : 0)
+       <<" cn_search="<<(ubfm::g_use_cn_search ? 1 : 0)
+       <<" batch_predict="<<(ubfm::g_use_batch_predict ? 1 : 0)
+       <<" po_num=100"          // DescentSearcherLocal::po_num（selfplay() で毎手 100 を設定）
+       <<" epsilon=0.1"          // choice_best_move_e_greedy の rand_double() < 0.1
+       <<" random_start=0.5"     // selfplay() の rand_double() < 0.5（ランダム局面 / 平手）
+       <<" vl_batch=8"           // ubfm::UBFMSearcherLocal::VL_BATCH_SIZE（protected のためリテラルで併記）
+       <<" vl_weight=0.5"        // ubfm::UBFMSearcherLocal::VL_WEIGHT（同上）
+       <<" vl_noise_sigma=0.2"   // ubfm.hpp next_child_vl / select_leaf_vl の rand_gaussian(0, 0.2)
+       <<" mate_depth=5"         // ubfm.hpp evaluate / predict_batch_leaves の mate_search(pos, 5)
+       <<" mated_depth=4"        // 同 mated_search(pos, 4)
+       <<" cn_tau="<<ubfm::CN_TAU
+       <<" score_win=0.9999-ply/2000"  // ubfm::score_win
+       <<" draw_rule=rep4"       // selfplay() の pos.is_draw(4)
+       <<"\n";
+}
+
 void execute_selfplay(const int num) {
     g_thread_counter = 0;
     g_selfplay_info.init();
     g_selfplay_info.set_limit(num);
 
     ubfm::g_use_batch_predict = true;
+    print_search_params(num);
     model::g_batch_predictor.start(0, 128, 1000);
 
     REP(i, SelfPlayWorker::NUM) {
@@ -284,6 +362,274 @@ void execute_selfplay(const int num) {
     //    <<" total_time_us:"<<s.total_time_us.load()
     //    <<" avg_time_us:"<<(s.call_count.load()>0 ? s.total_time_us.load()/s.call_count.load() : 0)
     //    <<"\n";
+}
+
+void SelfPlayWorker::run_probe() {
+    ASSERT(this->worker.size() > 0);
+    this->worker[0].run_probe();
+}
+
+void DescentSearcherLocal::run_probe() {
+    this->thread = new std::thread([this]() {
+        this->probe_loop();
+    });
+}
+
+void DescentSearcherLocal::probe_loop() {
+    for (auto idx = static_cast<size_t>(this->thread_id);
+         idx < g_probe_items.size();
+         idx += SelfPlayWorker::NUM) {
+        auto &item = g_probe_items[idx];
+        auto pos = hash::from_hash(item.key);
+        this->global->clear_tree();
+        this->po_num = g_probe_po;
+        auto child = this->probe_search(pos);
+        if (child == nullptr) {
+            item.ok = 0;
+            continue;
+        }
+        item.root_w = this->root_node()->w;
+        item.child_key = hash::hash_key(child->pos);
+        item.ok = 1;
+    }
+}
+
+ubfm::Node *DescentSearcherLocal::probe_search(game::Position &pos) {
+    // execute_descent と同じ手順（root セット → search_descent）だが、
+    // 手の選択だけ ε なしの probe 版に替える。
+    this->root_node()->pos = pos;
+    this->search_descent(this->po_num);
+    if (this->root_node()->child_len == 0) {
+        return nullptr;
+    }
+    return this->choice_best_move_probe();
+}
+
+ubfm::Node *DescentSearcherLocal::choice_best_move_probe() {
+    // choice_best_move_e_greedy と同じスコア（解決済み子を優先し、
+    // それ以外は -child->w）から、ε グリーディ（10% ランダム）と
+    // タイブレーク用の微小乱数（rand_double()/1000）を除いた決定的 argmax。
+    // probe は「探索が本番で選ぶ手」を測るので、探索的な手は入れない。
+    std::vector<nn::NNScore> scores;
+    REP(i, this->root_node()->child_len) {
+        scores.push_back(nn::NNScore(0.0));
+    }
+    REP(i, this->root_node()->child_len) {
+        auto child = this->root_node()->child(i);
+        if (child->is_resolved()) {
+            if (child->is_lose()) {
+                REP(j, this->root_node()->child_len) {
+                    scores[j] = nn::NNScore(0.0);
+                }
+                scores[i] = ubfm::score_win(0);
+                break;
+            } else if (child->is_draw()) {
+                scores[i] = nn::NNScore(0.0);
+            } else if (child->is_win()) {
+                scores[i] = ubfm::score_lose(0);
+            }
+        } else {
+            scores[i] = -child->w;
+        }
+    }
+    auto iter = std::max_element(scores.begin(), scores.end());
+    auto index = std::distance(scores.begin(), iter);
+    auto child = this->root_node()->child(index);
+    this->root_node()->best_move = child->parent_move;
+    return child;
+}
+
+void execute_probe(const std::string &keys_path, const int po_num) {
+    // キーファイル: 1行1キー（uint64 の10進表記）。空行と # 始まりは無視。
+    std::ifstream ifs(keys_path);
+    if (!ifs) {
+        Tee<<"probe: キーファイルを開けません: "<<keys_path<<"\n";
+        return;
+    }
+    g_probe_po = po_num;
+    g_probe_items.clear();
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        ProbeItem item;
+        item.key = std::stoull(line);
+        g_probe_items.push_back(item);
+    }
+    g_thread_counter = 0;
+
+    ubfm::g_use_batch_predict = true;
+    Tee<<"PROBE_PARAMS"
+       <<" positions="<<g_probe_items.size()
+       <<" workers="<<SelfPlayWorker::NUM
+       <<" use_descent="<<(USE_DESCENT ? 1 : 0)
+       <<" cn_search="<<(ubfm::g_use_cn_search ? 1 : 0)
+       <<" batch_predict=1"
+       <<" po_num="<<g_probe_po
+       <<" epsilon=0"
+       <<"\n";
+    model::g_batch_predictor.start(0, 128, 1000);
+
+    REP(i, SelfPlayWorker::NUM) {
+        selfplay::g_selfplay_worker[i].init();
+    }
+    REP(i, SelfPlayWorker::NUM) {
+        selfplay::g_selfplay_worker[i].run_probe();
+    }
+    REP(i, SelfPlayWorker::NUM) {
+        selfplay::g_selfplay_worker[i].join();
+    }
+
+    model::g_batch_predictor.stop();
+    ubfm::g_use_batch_predict = false;
+
+    for (const auto &item : g_probe_items) {
+        if (item.ok) {
+            std::ostringstream oss;
+            oss<<"PROBE "<<item.key
+               <<" "<<std::fixed<<std::setprecision(6)<<item.root_w
+               <<" "<<item.child_key<<"\n";
+            Tee<<oss.str();
+        } else {
+            Tee<<"PROBE_SKIP "<<item.key<<"\n";
+        }
+    }
+}
+
+void SelfPlayWorker::run_dump() {
+    ASSERT(this->worker.size() > 0);
+    this->worker[0].run_dump();
+}
+
+void DescentSearcherLocal::run_dump() {
+    this->thread = new std::thread([this]() {
+        this->dump_loop();
+    });
+}
+
+// 木を preorder で集める（index 0 が root）。
+inline void collect_nodes(ubfm::Node *node, std::vector<ubfm::Node*> &out) {
+    out.push_back(node);
+    if (node->child_len > 0) {
+        REP(i, node->child_len) {
+            collect_nodes(node->child(i), out);
+        }
+    }
+}
+
+// 木のテキスト化: TREE 行（root キーと root の w）に続き、ノードごとに
+// 「N <idx> <key> <state> <w> <子数> <子 idx...>」、最後に END。
+// state は ubfm::NodeState の int 値（Draw=0 / Win=1 / Lose=2 / Unknown=-1）。
+inline std::string serialize_tree(ubfm::Node *root) {
+    std::vector<ubfm::Node*> nodes;
+    collect_nodes(root, nodes);
+    std::unordered_map<ubfm::Node*, int> index;
+    REP(i, static_cast<int>(nodes.size())) {
+        index[nodes[i]] = i;
+    }
+    std::ostringstream oss;
+    oss<<"TREE "<<hash::hash_key(root->pos)
+       <<" "<<std::fixed<<std::setprecision(9)<<static_cast<double>(root->w)<<"\n";
+    REP(i, static_cast<int>(nodes.size())) {
+        auto *node = nodes[i];
+        const auto n_child = std::max(node->child_len, 0);
+        oss<<"N "<<i
+           <<" "<<hash::hash_key(node->pos)
+           <<" "<<static_cast<int>(node->state)
+           <<" "<<std::fixed<<std::setprecision(9)<<static_cast<double>(node->w)
+           <<" "<<n_child;
+        REP(j, n_child) {
+            oss<<" "<<index[node->child(j)];
+        }
+        oss<<"\n";
+    }
+    oss<<"END\n";
+    return oss.str();
+}
+
+void DescentSearcherLocal::dump_loop() {
+    for (auto idx = static_cast<size_t>(this->thread_id);
+         idx < g_dump_items.size();
+         idx += SelfPlayWorker::NUM) {
+        auto &item = g_dump_items[idx];
+        auto pos = hash::from_hash(item.key);
+        this->global->clear_tree();
+        this->po_num = g_dump_po;
+        this->root_node()->pos = pos;
+        this->search_descent(this->po_num);
+        if (this->root_node()->child_len <= 0) {
+            item.ok = 0;
+            continue;
+        }
+        item.text = serialize_tree(this->root_node());
+        item.ok = 1;
+    }
+}
+
+void execute_dump(const std::string &keys_path, const int po_num,
+                  const std::string &out_path) {
+    std::ifstream ifs(keys_path);
+    if (!ifs) {
+        Tee<<"dump: キーファイルを開けません: "<<keys_path<<"\n";
+        return;
+    }
+    g_dump_po = po_num;
+    g_dump_items.clear();
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        DumpItem item;
+        item.key = std::stoull(line);
+        g_dump_items.push_back(item);
+    }
+    g_thread_counter = 0;
+
+    ubfm::g_use_batch_predict = true;
+    Tee<<"DUMP_PARAMS"
+       <<" positions="<<g_dump_items.size()
+       <<" workers="<<SelfPlayWorker::NUM
+       <<" use_descent="<<(USE_DESCENT ? 1 : 0)
+       <<" cn_search="<<(ubfm::g_use_cn_search ? 1 : 0)
+       <<" batch_predict=1"
+       <<" po_num="<<g_dump_po
+       <<"\n";
+    model::g_batch_predictor.start(0, 128, 1000);
+
+    REP(i, SelfPlayWorker::NUM) {
+        selfplay::g_selfplay_worker[i].init();
+    }
+    REP(i, SelfPlayWorker::NUM) {
+        selfplay::g_selfplay_worker[i].run_dump();
+    }
+    REP(i, SelfPlayWorker::NUM) {
+        selfplay::g_selfplay_worker[i].join();
+    }
+
+    model::g_batch_predictor.stop();
+    ubfm::g_use_batch_predict = false;
+
+    std::ofstream ofs(out_path);
+    if (!ofs) {
+        Tee<<"dump: 出力ファイルを開けません: "<<out_path<<"\n";
+        return;
+    }
+    ofs<<"DUMP_PARAMS positions="<<g_dump_items.size()
+       <<" po_num="<<g_dump_po
+       <<" workers="<<SelfPlayWorker::NUM<<"\n";
+    auto n_ok = 0;
+    for (const auto &item : g_dump_items) {
+        if (item.ok) {
+            ofs<<item.text;
+            n_ok++;
+        } else {
+            ofs<<"TREE_SKIP "<<item.key<<"\n";
+        }
+    }
+    Tee<<"dump: "<<n_ok<<"/"<<g_dump_items.size()
+       <<" 木を "<<out_path<<" に書きました\n";
 }
 
 void SelfPlayWorker::init() {

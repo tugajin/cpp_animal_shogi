@@ -10,3 +10,5 @@ ai/gmon.out
 ai/measure_gpu.sh
 learn/model/
 *.ods
+*.json
+*.tmp
