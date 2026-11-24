@@ -35,6 +35,7 @@ namespace selfplay {
 SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
 int g_thread_counter;
 SelfPlayInfo g_selfplay_info;
+int g_selfplay_po = 100;
 std::vector<ProbeItem> g_probe_items;
 int g_probe_po = 100;
 std::vector<DumpItem> g_dump_items;
@@ -52,6 +53,7 @@ BatchPredictor g_batch_predictor;
 }
 int main(int argc, char **argv){
     auto num = 999999999;
+    int selfplay_po = 100;
     std::string mode = "selfplay";
     std::string probe_keys;
     int probe_po = 100;
@@ -83,6 +85,9 @@ int main(int argc, char **argv){
             }
         } else {
             num = std::stoi(arg1);
+            if (argc > 2) {
+                selfplay_po = std::stoi(argv[2]);
+            }
         }
     }
     check_mode();
@@ -105,7 +110,7 @@ int main(int argc, char **argv){
         }
         selfplay::execute_dump(dump_keys, dump_po, dump_out);
     } else {
-        selfplay::execute_selfplay(num);
+        selfplay::execute_selfplay(num, selfplay_po);
     }
     return 0;
 }

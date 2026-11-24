@@ -22,7 +22,7 @@
 #include "search.hpp"
 
 #define DEBUG_OUT 0
-static constexpr bool USE_DESCENT = false;
+static constexpr bool USE_DESCENT = true;
 
 namespace selfplay {
 
@@ -204,6 +204,10 @@ public:
 extern SelfPlayWorker g_selfplay_worker[SelfPlayWorker::NUM];
 extern int g_thread_counter;
 extern SelfPlayInfo g_selfplay_info;
+// 自己対局1手あたりの探索回数（2026-11-24 追加）。既定は従来通り 100 で、
+// コマンドライン第2引数（cpp_animal_shogi <games> [po]）で変更できる。
+// execute_selfplay が開始時に設定し、selfplay() が毎手 po_num へ代入する。
+extern int g_selfplay_po;
 
 // probe モード（学習なしの探索測定、2026-11-22 追加）:
 // 固定局面リストに対して生成時と同じ探索（po_num=100）を ε=0 で回し、
@@ -225,11 +229,11 @@ void execute_probe(const std::string &keys_path, const int po_num);
 // 固定局面リストに対して浅い探索（po_num 回）を回し、探索木そのものを
 // テキストで書き出す。学習側（train_distill.py）は木の葉を学習中モデルで
 // 評価し直し、backup した root 値を深い探索の教師に合わせる。
-// ノードの値（w）は update_node の規則により「子の符号反転の最大」と
-// 常に一致する（解決済みの子がいても、値だけ見れば plain な negamax max
-// になることを ubfm.hpp の update_node で確認済み）。そのため学習側は
-// state を見ずに max だけで backup を再現できる。検証は train_distill.py
-// の --verify（ダンプした葉の値を入れると root_w が再現されること）。
+// ノードの値（w）の backup 規則は ubfm.hpp の update_node そのもの:
+// 解決済みノードは定数で、未解決ノードに負け確定の子があれば「子の並びで
+// 最初の」負け確定の子が優先される（最速の証明とは限らない。2026-11-23 に
+// 特定）。学習側の backup はこの規則を厳密に再現する必要がある
+// （train_distill.py v3）。検証は同スクリプトの --verify。
 struct DumpItem {
     Key key = 0;
     std::string text;
@@ -318,7 +322,7 @@ void print_search_params(const int num) {
        <<" use_descent="<<(USE_DESCENT ? 1 : 0)
        <<" cn_search="<<(ubfm::g_use_cn_search ? 1 : 0)
        <<" batch_predict="<<(ubfm::g_use_batch_predict ? 1 : 0)
-       <<" po_num=100"          // DescentSearcherLocal::po_num（selfplay() で毎手 100 を設定）
+       <<" po_num="<<g_selfplay_po  // DescentSearcherLocal::po_num（selfplay() で毎手 g_selfplay_po を設定）
        <<" epsilon=0.1"          // choice_best_move_e_greedy の rand_double() < 0.1
        <<" random_start=0.5"     // selfplay() の rand_double() < 0.5（ランダム局面 / 平手）
        <<" vl_batch=8"           // ubfm::UBFMSearcherLocal::VL_BATCH_SIZE（protected のためリテラルで併記）
@@ -332,7 +336,8 @@ void print_search_params(const int num) {
        <<"\n";
 }
 
-void execute_selfplay(const int num) {
+void execute_selfplay(const int num, const int po_num) {
+    g_selfplay_po = po_num;
     g_thread_counter = 0;
     g_selfplay_info.init();
     g_selfplay_info.set_limit(num);
@@ -1151,7 +1156,7 @@ void DescentSearcherLocal::selfplay() {
                 this->replay_buffer.close();
                 break;
             }
-            this->po_num = 100;
+            this->po_num = g_selfplay_po;
 
             auto best_move = execute_descent(pos);
 
