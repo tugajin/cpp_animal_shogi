@@ -55,6 +55,11 @@ public:
     void push_back(const Key hash, const nn::NNScore sc) {
         info.push_back({{"p", hash},{"s", sc},{"r", -99}});
     }
+    // 木レコード用: 探索の根からの深さ "d" を付ける（2026-11-24、B1 対照実験）。
+    // 学習側は "d" を深さフィルタにだけ使い、対局の進行には影響しない。
+    void push_back_with_depth(const Key hash, const nn::NNScore sc, const int depth) {
+        info.push_back({{"p", hash},{"s", sc},{"r", -99},{"d", depth}});
+    }
     void push_back(const Key hash, const nn::NNScore sc, const int cn) {
         info.push_back({{"p", hash},{"s", sc},{"r", -99},{"c", cn}});
     }
@@ -115,7 +120,7 @@ private:
     ubfm::Node *probe_search(game::Position &pos);
     ubfm::Node *choice_best_move_probe();
     bool interrupt_descent(const uint32 current_num, const uint32 simulation_num) const;
-    void add_replay_buffer(ubfm::Node *node);
+    void add_replay_buffer(ubfm::Node *node, const int depth);
     void choice_best_move_e_greedy();
     void choice_best_move_count();
     void choice_best_move_ordinal();
@@ -819,9 +824,9 @@ bool DescentSearcherLocal::interrupt_descent(const uint32 current_num, const uin
     return false;
 }
 
-void DescentSearcherLocal::add_replay_buffer(ubfm::Node *node) {
+void DescentSearcherLocal::add_replay_buffer(ubfm::Node *node, const int depth) {
     const auto key = hash::hash_key(node->pos);
-    this->replay_buffer.push_back(key, node->w);
+    this->replay_buffer.push_back_with_depth(key, node->w, depth);
     REP(i, node->child_len) {
 
         ASSERT(i>=0);
@@ -831,7 +836,7 @@ void DescentSearcherLocal::add_replay_buffer(ubfm::Node *node) {
         if (child->is_terminal() && !child->is_resolved()) {
             continue;
         }
-        this->add_replay_buffer(child);
+        this->add_replay_buffer(child, depth + 1);
     }
 }
 
@@ -847,7 +852,7 @@ Move DescentSearcherLocal::execute_descent(game::Position &pos) {
     //this->choice_best_move_greedy();
     //this->choice_best_move_dropout();
     if (USE_DESCENT) {
-        this->add_replay_buffer(this->root_node());
+        this->add_replay_buffer(this->root_node(), 0);
     } else {
         const auto k = hash::hash_key(this->root_node()->pos);
         const auto w = this->root_node()->w;

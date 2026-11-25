@@ -30,16 +30,25 @@
 #
 # 前提: arm 用バイナリ learn/cpp_animal_shogi_arm<arm> と、
 #       train_arm.py --init-only 済みの MODEL_DIR があること。
+#
+# v6 の追加（B1 対照実験用）:
+#   SEED 環境変数（既定 123）: train_arm.py の --seed に渡す。
+#     seed 対照 arm の例: 初期モデルを --init-only --seed 456 で用意してから
+#       SEED=456 MODEL_DIR=model/arm2po10s456 ./run_arm.sh 2 250 20 5000 10
+#   EXTRA_TRAIN_ARGS 環境変数: train_arm.py への追加引数をそのまま渡す。
+#     例: EXTRA_TRAIN_ARGS="--relabel-raw"（ラベル形の対照 arm）
 set -u
 cd "$(dirname "$0")"
 
-echo "run_arm.sh version 2026-11-24 v5（生成 po の指定／MODEL_DIR 上書き対応）"
+echo "run_arm.sh version 2026-11-24 v6（SEED／EXTRA_TRAIN_ARGS 対応）"
 
 ARM=${1:?使い方: ./run_arm.sh <arm> <games> [total] [iter_positions] [gen_po]}
 GAMES=${2:?使い方: ./run_arm.sh <arm> <games> [total] [iter_positions] [gen_po]}
 TOTAL=${3:-20}
 ITER_POS=${4:-}
 GEN_PO=${5:-100}
+SEED="${SEED:-123}"
+EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 
 export LD_LIBRARY_PATH="${HOME}/onnxruntime-1.20.0/lib:${LD_LIBRARY_PATH:-}"
 
@@ -82,6 +91,10 @@ fi
 mkdir -p logs
 echo "arm${ARM}(${TAG}): イテレーション ${START} から $((TOTAL - 1)) まで、1回 ${GAMES} 局で実行します"
 echo "arm${ARM}(${TAG}): 生成 po は ${GEN_PO} です"
+echo "arm${ARM}(${TAG}): seed は ${SEED} です"
+if [ -n "${EXTRA_TRAIN_ARGS}" ]; then
+  echo "arm${ARM}(${TAG}): train_arm.py への追加引数: ${EXTRA_TRAIN_ARGS}"
+fi
 if [ -n "${ITER_POS}" ]; then
   echo "arm${ARM}(${TAG}): 1イテレーションの学習局面数上限は ${ITER_POS} 局面です"
 fi
@@ -140,8 +153,10 @@ while [ "${i}" -lt "${TOTAL}" ]; do
   if [ -n "${ITER_POS}" ]; then
     ITER_OPT="--iter-positions ${ITER_POS}"
   fi
+  # EXTRA_TRAIN_ARGS は空白区切りで展開する（例: "--relabel-raw"）
   ../.venv/bin/python train_arm.py --arm "${ARM}" --model-dir "${MODEL_DIR}" \
-      --data-dir "${GEN_DIR}" --init "${MODEL_DIR}/best_single.h5" ${ITER_OPT} || {
+      --data-dir "${GEN_DIR}" --init "${MODEL_DIR}/best_single.h5" \
+      --seed "${SEED}" ${ITER_OPT} ${EXTRA_TRAIN_ARGS} || {
     echo "train_arm.py が失敗しました（arm${ARM} gen_${i}）。train_log と出力を確認してください" >&2
     exit 1
   }

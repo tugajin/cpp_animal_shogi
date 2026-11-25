@@ -58,7 +58,17 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "2026-11-21 v6（木学習 arm で上限未指定のときに警告を追加）"
+VERSION = "2026-11-24 v7（B1 対照実験: --relabel-raw / --max-depth を追加）"
+
+# v7 の追加（B1 対照実験用。設計は EXPERIMENT.md「B1 対照実験の設計」）:
+#   --relabel-raw: サンプルしたレコードのラベル s を、学習開始時点のモデル
+#     （= --init の重み = その世代の生成モデル）の生評価値（0 探索）に
+#     付け替える。局面の集合は木レコードのまま、ラベルの形だけを変える
+#     対照（RAW arm）。r 項は触らない（木 arm では元々全マスク）。
+#   --max-depth D: 木レコードを、探索の根からの深さ d <= D のものに
+#     限定してからサンプルする（DEPTH arm）。レコードに "d" が無い場合は
+#     静かに素通りせず中止する（深さ記録対応バイナリで生成したデータが
+#     前提。C++ 側は selfplay.hpp の add_replay_buffer が "d" を書く）。
 
 
 # ============================================================
@@ -223,6 +233,45 @@ def select_tree_records(games, state, budget_games, budget_positions, seed,
     return selected, len(chosen), bound
 
 
+def filter_by_depth(games, max_depth):
+    """木レコードを根からの深さ d <= max_depth に限定する（DEPTH arm 用）。
+
+    games は (名前, レコード列) のリスト。戻り値:
+    (絞った games, 残したレコード数, 全レコード数, "d" 欠落レコード数)。
+    空になった対局は落とす。"d" の欠落は呼び出し側で中止判断に使う
+    （ここでは落とさず数だけ返す）。"""
+    filtered = []
+    kept = 0
+    total = 0
+    missing = 0
+    for name, records in games:
+        total += len(records)
+        rows = []
+        for rec in records:
+            if "d" not in rec:
+                missing += 1
+                continue
+            if rec["d"] <= max_depth:
+                rows.append(rec)
+        kept += len(rows)
+        if rows:
+            filtered.append((name, rows))
+    return filtered, kept, total, missing
+
+
+def apply_relabel(rows, values):
+    """(p, s, r, mask) の列の s を values（同じ順の生評価値）で置き換える。
+    戻り値: (新しい rows, |新 s − 旧 s| の平均)。"""
+    assert len(rows) == len(values)
+    new_rows = []
+    diff_sum = 0.0
+    for (p, s, r, mask), v in zip(rows, values):
+        new_rows.append((p, float(v), r, mask))
+        diff_sum += abs(float(v) - s)
+    mean_diff = diff_sum / len(rows) if rows else 0.0
+    return new_rows, mean_diff
+
+
 def self_test():
     ok = True
 
@@ -296,6 +345,24 @@ def self_test():
         tree_games, {"games": 0, "positions": 100000}, 5000, 100000, seed=123)
     check("木レコードも予算を使い切ったら空",
           tsel3 == [] and tbound3 == "exhausted")
+
+    # 深さフィルタ: d <= max_depth だけ残し、空の対局は落とし、欠落は数える
+    d_games = [("x", [{"p": 1, "d": 0}, {"p": 2, "d": 1},
+                      {"p": 3, "d": 2}, {"p": 4, "d": 1}]),
+               ("y", [{"p": 5, "d": 3}]),
+               ("z", [{"p": 6}])]
+    f_games, kept, total, missing = filter_by_depth(d_games, 1)
+    check("深さフィルタは d<=1 を残す",
+          kept == 3 and total == 6 and [n for n, _ in f_games] == ["x"])
+    check("深さフィルタは d 欠落を数える", missing == 1)
+
+    # ラベル付け替え: s だけが置き換わり、差分の平均が返る
+    rows = [(1, 0.5, -99, 0), (2, -0.2, -99, 0)]
+    new_rows, mean_diff = apply_relabel(rows, [0.1, 0.3])
+    check("付け替えで s が置き換わる",
+          new_rows[0][1] == 0.1 and new_rows[1][1] == 0.3
+          and new_rows[0][0] == 1 and new_rows[0][2] == -99)
+    check("付け替え差分の平均", abs(mean_diff - 0.45) < 1e-12)
 
     print("self-test:", "OK" if ok else "NG")
     return ok
@@ -490,6 +557,23 @@ def train(args):
         log("- 引き分け対局の除外: 木学習 arm のため学習側では判定不能"
             "（レコードに結果なし。生成側の課題として ARM_RUNBOOK.md に記載）")
 
+    # ---- 深さの限定（DEPTH arm）: サンプル前に母集団を d <= max_depth に絞る ----
+    if args.max_depth >= 0:
+        games, kept, total, missing = filter_by_depth(games, args.max_depth)
+        if missing:
+            log(f"** レコードに深さ \"d\" が無いものが {missing:,} 件あります。"
+                "深さ記録対応バイナリで生成したデータではないため中止 **")
+            with (model_dir / "train_log.md").open("a", encoding="utf-8") as fh:
+                fh.write("\n".join(log_lines) + "\n\n")
+            return False
+        log(f"- 深さフィルタ（--max-depth {args.max_depth}）: "
+            f"{total:,} 局面中 {kept:,} 局面が残った（残り {len(games):,} 局）")
+        if not games:
+            log("** 深さフィルタ後にデータが空のため中止 **")
+            with (model_dir / "train_log.md").open("a", encoding="utf-8") as fh:
+                fh.write("\n".join(log_lines) + "\n\n")
+            return False
+
     if args.arm in (2, 3) and not args.iter_positions:
         log("** 警告: 木学習 arm で --iter-positions が未指定です。"
             "この回は累計予算の残り全部まで学習します"
@@ -547,6 +631,26 @@ def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(args.init, args.seed).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.00001)
+
+    # ---- ラベルの付け替え（RAW arm）: 学習前のモデル（= 生成モデル）の
+    # 生評価値を新しい s とする。局面の集合と r / mask は変えない ----
+    if args.relabel_raw:
+        model.eval()
+        raw_values = []
+        keys = [p for p, _s, _r, _m in records]
+        with torch.no_grad():
+            for i in range(0, len(keys), 512):
+                feats = []
+                for p in keys[i:i + 512]:
+                    st = from_hash(p)
+                    file, rank, channel = DN_INPUT_SHAPE
+                    feats.append(np.array(st.feature()).reshape(channel, file, rank))
+                x = torch.from_numpy(np.stack(feats)).float().to(device)
+                raw_values.extend(model(x).reshape(-1).tolist())
+        records, mean_diff = apply_relabel(records, raw_values)
+        log(f"- ラベル付け替え（--relabel-raw）: {len(records):,} レコードの s を"
+            f"生成モデル（--init の重み）の生評価値に置き換えた"
+            f"（|新 s − 旧 s| の平均 {mean_diff:.4f}）")
     dataloader = DataLoader(
         dataset=ArmDataset(records), batch_size=args.batch_size, shuffle=True)
 
@@ -617,6 +721,12 @@ def main():
     parser.add_argument("--iter-positions", type=int, default=0,
                         help="1イテレーションで学習する局面数の上限"
                              "（0=制限なし。木学習 arm 用）")
+    parser.add_argument("--relabel-raw", action="store_true",
+                        help="ラベル s を学習開始時点のモデルの生評価値に"
+                             "付け替える（B1 対照実験の RAW arm）")
+    parser.add_argument("--max-depth", type=int, default=-1,
+                        help="木レコードを根からの深さ d <= この値に限定する"
+                             "（-1=無効。B1 対照実験の DEPTH arm）")
     args = parser.parse_args()
 
     print(f"train_arm.py version {VERSION}")
